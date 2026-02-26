@@ -1,67 +1,188 @@
 """
 layout_mapper.py
-Handles keyboard layout translation between English QWERTY and Hebrew.
+Generic keyboard layout translation engine.
 
-The mapping reflects the standard Israeli Hebrew keyboard layout:
-physical key positions on a QWERTY keyboard map to their Hebrew equivalents.
+Each layout is a dict mapping physical QWERTY key labels (lowercase) to the
+character that key produces in that language's keyboard layout.
+
+A LayoutPair encapsulates two layouts and provides bidirectional translation:
+  - If the typed text belongs to layout A's character set → translate to B
+  - If the typed text belongs to layout B's character set → translate to A
+  - If mixed or unmappable → return None (no suggestion)
+
+Adding a new language: add an entry to LAYOUTS and it is automatically
+available as part of any LayoutPair combination.
 """
 
-# Standard Hebrew keyboard layout mapping (English physical key → Hebrew character)
-EN_TO_HE: dict[str, str] = {
-    'q': '/',  'w': "'", 'e': 'ק', 'r': 'ר', 't': 'א',
-    'y': 'ט',  'u': 'ו', 'i': 'ן', 'o': 'ם', 'p': 'פ',
-    'a': 'ש',  's': 'ד', 'd': 'ג', 'f': 'כ', 'g': 'ע',
-    'h': 'י',  'j': 'ח', 'k': 'ל', 'l': 'ך',
-    'z': 'ז',  'x': 'ס', 'c': 'ב', 'v': 'ה', 'b': 'נ',
-    'n': 'מ',  'm': 'צ',
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------
+# Built-in layout definitions
+# Physical QWERTY key label (lowercase) → character produced by that key
+# ---------------------------------------------------------------------------
+
+LAYOUTS: dict[str, dict[str, str]] = {
+    "English": {
+        'q': 'q', 'w': 'w', 'e': 'e', 'r': 'r', 't': 't',
+        'y': 'y', 'u': 'u', 'i': 'i', 'o': 'o', 'p': 'p',
+        'a': 'a', 's': 's', 'd': 'd', 'f': 'f', 'g': 'g',
+        'h': 'h', 'j': 'j', 'k': 'k', 'l': 'l',
+        'z': 'z', 'x': 'x', 'c': 'c', 'v': 'v', 'b': 'b',
+        'n': 'n', 'm': 'm',
+    },
+    "Hebrew": {
+        'q': '/', 'w': "'", 'e': 'ק', 'r': 'ר', 't': 'א',
+        'y': 'ט', 'u': 'ו', 'i': 'ן', 'o': 'ם', 'p': 'פ',
+        'a': 'ש', 's': 'ד', 'd': 'ג', 'f': 'כ', 'g': 'ע',
+        'h': 'י', 'j': 'ח', 'k': 'ל', 'l': 'ך',
+        'z': 'ז', 'x': 'ס', 'c': 'ב', 'v': 'ה', 'b': 'נ',
+        'n': 'מ', 'm': 'צ',
+    },
+    "Russian": {
+        'q': 'й', 'w': 'ц', 'e': 'у', 'r': 'к', 't': 'е',
+        'y': 'н', 'u': 'г', 'i': 'ш', 'o': 'щ', 'p': 'з',
+        'a': 'ф', 's': 'ы', 'd': 'в', 'f': 'а', 'g': 'п',
+        'h': 'р', 'j': 'о', 'k': 'л', 'l': 'д',
+        'z': 'я', 'x': 'ч', 'c': 'с', 'v': 'м', 'b': 'и',
+        'n': 'т', 'm': 'ь',
+    },
+    "Arabic": {
+        'q': 'ض', 'w': 'ص', 'e': 'ث', 'r': 'ق', 't': 'ف',
+        'y': 'غ', 'u': 'ع', 'i': 'ه', 'o': 'خ', 'p': 'ح',
+        'a': 'ش', 's': 'س', 'd': 'ي', 'f': 'ب', 'g': 'ل',
+        'h': 'ا', 'j': 'ت', 'k': 'ن', 'l': 'م',
+        'z': 'ظ', 'x': 'ط', 'c': 'ز', 'v': 'و', 'b': 'ر',
+        'n': 'ل', 'm': 'ى',
+    },
+    "Greek": {
+        'q': ';', 'w': 'ς', 'e': 'ε', 'r': 'ρ', 't': 'τ',
+        'y': 'υ', 'u': 'θ', 'i': 'ι', 'o': 'ο', 'p': 'π',
+        'a': 'α', 's': 'σ', 'd': 'δ', 'f': 'φ', 'g': 'γ',
+        'h': 'η', 'j': 'ξ', 'k': 'κ', 'l': 'λ',
+        'z': 'ζ', 'x': 'χ', 'c': 'ψ', 'v': 'ω', 'b': 'β',
+        'n': 'ν', 'm': 'μ',
+    },
 }
 
-# Reverse mapping: Hebrew character → English physical key
-HE_TO_EN: dict[str, str] = {v: k for k, v in EN_TO_HE.items()}
-
-# All Hebrew characters we can recognise
-_HE_CHARS = set(EN_TO_HE.values())
-# All Latin letters we map from
-_EN_CHARS = set(EN_TO_HE.keys())
+# Minimum number of characters required before showing a suggestion.
+# Prevents noisy single-character bubbles.
+MIN_WORD_LENGTH = 2
 
 
-def _is_latin_alpha(text: str) -> bool:
-    """Return True if every character is an ASCII letter (a-z / A-Z)."""
-    return bool(text) and all(c.lower() in _EN_CHARS for c in text)
+# ---------------------------------------------------------------------------
+# LayoutPair
+# ---------------------------------------------------------------------------
 
-
-def _is_hebrew(text: str) -> bool:
-    """Return True if every character is a mapped Hebrew letter."""
-    return bool(text) and all(c in _HE_CHARS for c in text)
-
-
-def translate(text: str) -> str | None:
+class LayoutPair:
     """
-    Auto-detect the script of *text* and translate to the other layout.
+    Encapsulates two keyboard layouts and provides bidirectional translation.
 
-    Returns:
-        The translated string, or None if:
-        - The text is empty or contains unmapped characters.
-        - The translation would be identical to the input.
+    Translation algorithm:
+      A→B: for each char in input, find its physical key via the inverse of
+           layout A, then look up that physical key in layout B.
+      B→A: same in reverse.
+
+    Auto-detection: if all (lowercased) input chars belong to layout A →
+    try A→B; if all belong to layout B → try B→A.
     """
-    if not text:
+
+    def __init__(self, lang_a: str, lang_b: str) -> None:
+        if lang_a not in LAYOUTS:
+            raise ValueError(f"Unknown layout: {lang_a!r}.  "
+                             f"Available: {list(LAYOUTS)}")
+        if lang_b not in LAYOUTS:
+            raise ValueError(f"Unknown layout: {lang_b!r}.  "
+                             f"Available: {list(LAYOUTS)}")
+        if lang_a == lang_b:
+            raise ValueError("lang_a and lang_b must be different")
+
+        self.lang_a = lang_a
+        self.lang_b = lang_b
+
+        self._map_a: dict[str, str] = LAYOUTS[lang_a]   # physical_key → char_a
+        self._map_b: dict[str, str] = LAYOUTS[lang_b]   # physical_key → char_b
+
+        # Inverse: char → physical_key
+        self._inv_a: dict[str, str] = {v: k for k, v in self._map_a.items()}
+        self._inv_b: dict[str, str] = {v: k for k, v in self._map_b.items()}
+
+        # Frozensets of characters each layout produces
+        self._chars_a: frozenset[str] = frozenset(self._map_a.values())
+        self._chars_b: frozenset[str] = frozenset(self._map_b.values())
+
+    @property
+    def name(self) -> str:
+        return f"{self.lang_a} ↔ {self.lang_b}"
+
+    @property
+    def tracked_chars(self) -> frozenset[str]:
+        """
+        Union of all characters from both layouts.
+        The keyboard hook uses this to decide which keystrokes to accumulate
+        (all others clear the buffer, signalling an untranslatable context).
+        """
+        return self._chars_a | self._chars_b
+
+    def translate(self, text: str) -> str | None:
+        """
+        Auto-detect the source layout and translate to the other.
+
+        Returns None if:
+          - text has fewer than MIN_WORD_LENGTH characters
+          - text contains characters not belonging exclusively to one layout
+          - the translation would be identical to the input
+        """
+        if len(text) < MIN_WORD_LENGTH:
+            return None
+
+        # Normalise case so Latin-based layouts (like English) match lowercase
+        lower = text.lower()
+
+        # Try A → B
+        if all(c in self._chars_a for c in lower):
+            result = self._convert(lower, self._inv_a, self._map_b)
+            if result and result != text:
+                return result
+
+        # Try B → A  (use original text — non-Latin scripts are case-neutral)
+        if all(c in self._chars_b for c in text):
+            result = self._convert(text, self._inv_b, self._map_a)
+            if result and result != text:
+                return result
+
         return None
 
-    lower = text.lower()
+    @staticmethod
+    def _convert(
+        text: str,
+        inv_src: dict[str, str],
+        dst: dict[str, str],
+    ) -> str | None:
+        """Translate *text* via inverse-source → destination lookup."""
+        out: list[str] = []
+        for ch in text:
+            physical = inv_src.get(ch)
+            if physical is None:
+                return None
+            target = dst.get(physical)
+            if target is None:
+                return None
+            out.append(target)
+        return ''.join(out)
 
-    if _is_latin_alpha(lower):
-        # English physical keys → Hebrew characters
-        result = ''.join(EN_TO_HE[c] for c in lower)
-        return result if result != text else None
 
-    if _is_hebrew(text):
-        # Hebrew characters → English physical keys
-        result = ''.join(HE_TO_EN[c] for c in text)
-        return result if result != text else None
+# ---------------------------------------------------------------------------
+# Convenience: pre-built pairs and defaults
+# ---------------------------------------------------------------------------
 
-    return None
+def build_all_pairs() -> list[LayoutPair]:
+    """Return one LayoutPair for every unique combination in LAYOUTS."""
+    names = list(LAYOUTS)
+    pairs: list[LayoutPair] = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            pairs.append(LayoutPair(a, b))
+    return pairs
 
 
-def get_supported_layouts() -> list[str]:
-    """Return the list of supported layout-pair names."""
-    return ['English ↔ Hebrew']
+DEFAULT_PAIR = LayoutPair("English", "Hebrew")

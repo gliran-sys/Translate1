@@ -130,10 +130,6 @@ class BubbleUI:
 
         canvas.delete('all')
 
-        # Measure text to size the canvas
-        tmp = tk.Label(font=_FONT)
-        tmp_font = tmp.cget('font')
-
         # Use a temporary label to measure
         test_lbl = tk.Label(self._win, text=text, font=_FONT)
         test_lbl.update_idletasks()
