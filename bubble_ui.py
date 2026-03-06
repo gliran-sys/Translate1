@@ -25,6 +25,11 @@ class _POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
 def _get_cursor_pos() -> tuple[int, int]:
     pt = _POINT()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
@@ -227,6 +232,15 @@ class BubbleUI:
         if prev_fg and _u32.GetForegroundWindow() == self._win.winfo_id():  # type: ignore[union-attr]
             _u32.SetForegroundWindow(prev_fg)
         self._win.lift()        # type: ignore[union-attr]
+
+        # Record the bubble's physical screen rect NOW, after the window is
+        # shown and positioned.  GetWindowRect returns physical pixels and
+        # matches pynput's coordinate space regardless of DPI scaling, unlike
+        # winfo_width()/winfo_height() which may be in logical (scaled) pixels.
+        rc = _RECT()
+        ctypes.windll.user32.GetWindowRect(self._win.winfo_id(), ctypes.byref(rc))  # type: ignore[union-attr]
+        self._bubble_rect = (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+
         self._reset_auto_hide()
 
     def _position_near_cursor(self) -> None:
@@ -247,7 +261,6 @@ class BubbleUI:
         y = max(0, min(y, screen_h - h))
 
         self._win.geometry(f'+{x}+{y}')
-        self._bubble_rect = (x, y, w, h)
 
     def _hide(self) -> None:
         self._bubble_rect = None
@@ -269,18 +282,35 @@ class BubbleUI:
         self._root.after(300, self._hide)
 
     # ------------------------------------------------------------------
-    # Click handler
+    # Click handler — two entry points, only one fires the replacement
     # ------------------------------------------------------------------
 
-    def _on_click(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+    def trigger_replace(self) -> None:
+        """Called from pynput's mouse-listener thread when a click lands on
+        the bubble.  Schedules _do_replace on the tkinter main thread so the
+        replacement is triggered even if tkinter's own <Button-1> event never
+        arrives (e.g. the window is briefly withdrawn before WM_LBUTTONDOWN
+        is processed)."""
+        self._root.after(0, self._do_replace)
+
+    def _do_replace(self) -> None:
+        """Tkinter-thread handler shared by trigger_replace() and _on_click().
+        Atomically consumes _current_buffer / _current_translation so only the
+        first of the two callers actually fires the replacement."""
         buf = self._current_buffer
         trans = self._current_translation
         if buf and trans:
+            # Clear immediately so a concurrent call from the other path sees
+            # empty values and does nothing.
+            self._current_buffer = ''
+            self._current_translation = None
             self._hide()
-            # Call the replacement callback in a new thread so we don't
-            # block the tkinter main loop while injecting keystrokes.
             threading.Thread(
                 target=self._on_replace,
                 args=(buf, trans),
                 daemon=True,
             ).start()
+
+    def _on_click(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
+        # Delegate to _do_replace which handles the atomic consume.
+        self._do_replace()

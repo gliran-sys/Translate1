@@ -81,9 +81,11 @@ class KeyboardHook:
         on_change: Callable[[str, str | None], None],
         pair: LayoutPair | None = None,
         is_click_on_bubble: Callable[[int, int], bool] | None = None,
+        on_bubble_click: Callable[[], None] | None = None,
     ) -> None:
         self._on_change = on_change
         self._is_click_on_bubble = is_click_on_bubble
+        self._on_bubble_click = on_bubble_click
         self._pair: LayoutPair = pair or DEFAULT_PAIR
         self._buffer: str = ''
         self._lock = threading.Lock()
@@ -175,7 +177,11 @@ class KeyboardHook:
         # <Button-1> handler will fire next and trigger the replacement.
         if pressed and not self.is_replacing:
             if self._is_click_on_bubble and self._is_click_on_bubble(x, y):
-                return
+                # Trigger replacement via the bubble's own scheduler so we
+                # don't depend on tkinter delivering <Button-1> reliably.
+                if self._on_bubble_click:
+                    self._on_bubble_click()
+                return  # do NOT clear buffer
             self._clear_buffer()
 
     # ------------------------------------------------------------------

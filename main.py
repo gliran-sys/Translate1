@@ -152,6 +152,7 @@ def main() -> None:
         on_change=on_buffer_change,
         pair=initial_pair,
         is_click_on_bubble=bubble.contains_point,
+        on_bubble_click=bubble.trigger_replace,
     )
 
     def on_toggle(enabled: bool) -> None:
