@@ -204,6 +204,13 @@ class BubbleUI:
             self._hide()
             return
 
+        # Snapshot the currently active window so we can restore focus after
+        # deiconify().  WS_EX_NOACTIVATE stops *click*-based activation but
+        # deiconify() calls ShowWindow(SW_SHOWNORMAL) which can still steal
+        # focus on some Windows versions.
+        _u32 = ctypes.windll.user32
+        prev_fg: int = _u32.GetForegroundWindow()
+
         self._draw_bubble(translation)
         self._position_near_cursor()
         # deiconify() must be called first so tkinter's internal state
@@ -212,7 +219,13 @@ class BubbleUI:
         self._win.deiconify()   # type: ignore[union-attr]
         # Immediately override the SW_SHOWNORMAL that deiconify() issued with
         # SW_SHOWNOACTIVATE (4) so the bubble never steals keyboard focus.
-        ctypes.windll.user32.ShowWindow(self._win.winfo_id(), 4)  # type: ignore[union-attr]
+        _u32.ShowWindow(self._win.winfo_id(), 4)  # type: ignore[union-attr]
+        # If deiconify() stole the foreground, give it back.  This keeps
+        # _char_for_vk() in keyboard_hook.py pointing at the real editor window
+        # (with the correct keyboard layout) rather than our English-layout
+        # bubble window.
+        if prev_fg and _u32.GetForegroundWindow() == self._win.winfo_id():  # type: ignore[union-attr]
+            _u32.SetForegroundWindow(prev_fg)
         self._win.lift()        # type: ignore[union-attr]
         self._reset_auto_hide()
 

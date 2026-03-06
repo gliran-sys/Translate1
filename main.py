@@ -20,6 +20,8 @@ Usage
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
 import threading
 import time
 import tkinter as tk
@@ -30,6 +32,52 @@ from bubble_ui import BubbleUI
 from keyboard_hook import KeyboardHook
 from layout_mapper import build_installed_pairs, DEFAULT_PAIR, LayoutPair
 from system_tray import SystemTray
+
+
+# ---------------------------------------------------------------------------
+# Unicode-safe keystroke injection (bypasses the active keyboard layout)
+# ---------------------------------------------------------------------------
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ('wVk',         ctypes.c_ushort),
+        ('wScan',       ctypes.c_ushort),
+        ('dwFlags',     ctypes.c_ulong),
+        ('time',        ctypes.c_ulong),
+        ('dwExtraInfo', ctypes.c_void_p),
+    ]
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [('ki', _KEYBDINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_ulong), ('_', _INPUT_UNION)]
+
+
+_INPUT_KEYBOARD   = 1
+_KEYEVENTF_UNICODE = 0x0004
+_KEYEVENTF_KEYUP   = 0x0002
+
+_send_input = ctypes.windll.user32.SendInput
+_send_input.argtypes = [ctypes.c_uint, ctypes.POINTER(_INPUT), ctypes.c_int]
+_send_input.restype  = ctypes.c_uint
+
+
+def _type_unicode(text: str) -> None:
+    """Inject *text* via KEYEVENTF_UNICODE so the active keyboard layout is
+    bypassed entirely.  pynput's controller.type() resolves characters through
+    the calling thread's layout (often English), which causes 's' to arrive as
+    'ד' in the text editor when Hebrew layout is active.  Using VK_PACKET +
+    KEYEVENTF_UNICODE sends the raw Unicode scalar directly."""
+    for char in text:
+        scan = ord(char)
+        for flags in (_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
+            ki  = _KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=None)
+            inp = _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=ki))
+            _send_input(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+        time.sleep(0.005)
 
 
 # ---------------------------------------------------------------------------
@@ -62,9 +110,7 @@ def _replace_text(
             controller.release(kb.Key.backspace)
             time.sleep(0.01)
 
-        for char in translation:
-            controller.type(char)
-            time.sleep(0.005)
+        _type_unicode(translation)
 
     finally:
         # Always restore state — even if injection raised an exception.
