@@ -210,6 +210,11 @@ class KeyboardHook:
         if char is None:
             return
 
+        # Normalise to lowercase.  MapVirtualKeyExW returns uppercase for Latin
+        # keys (e.g. 'A' for VK_A) but tracked_chars / translate() expect
+        # lowercase.  For Hebrew/Cyrillic/Arabic/.lower() is a no-op.
+        char = char.lower()
+
         # Space / tab / newline produced as a character → word boundary
         if char in (' ', '\t', '\n', '\r'):
             self._clear_buffer()

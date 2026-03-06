@@ -109,29 +109,36 @@ class SystemTray:
     # ------------------------------------------------------------------
 
     def _build_menu(self) -> pystray.Menu:
-        return pystray.Menu(
+        items: list = [
             # Enable / disable toggle
             pystray.MenuItem(
                 text=self._toggle_label,
                 action=self._handle_toggle,
                 checked=lambda item: self._enabled,
             ),
-            # Layout pair submenu
-            pystray.MenuItem(
-                'Layout',
-                pystray.Menu(*[
-                    pystray.MenuItem(
-                        text=pair.name,
-                        action=self._make_pair_handler(pair),
-                        checked=self._make_pair_checker(pair),
-                        radio=True,
-                    )
-                    for pair in self._available_pairs
-                ]),
-            ),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem('Exit', self._handle_exit),
-        )
+        ]
+
+        # Only show the Layout submenu when there are multiple pairs to choose
+        # from.  With a single installed pair the app works bidirectionally
+        # without manual selection, so the submenu would just add confusion.
+        if len(self._available_pairs) > 1:
+            items.append(
+                pystray.MenuItem(
+                    'Layout',
+                    pystray.Menu(*[
+                        pystray.MenuItem(
+                            text=pair.name,
+                            action=self._make_pair_handler(pair),
+                            checked=self._make_pair_checker(pair),
+                            radio=True,
+                        )
+                        for pair in self._available_pairs
+                    ]),
+                )
+            )
+
+        items += [pystray.Menu.SEPARATOR, pystray.MenuItem('Exit', self._handle_exit)]
+        return pystray.Menu(*items)
 
     def _toggle_label(self, item: pystray.MenuItem) -> str:  # noqa: ARG002
         return 'Enabled' if self._enabled else 'Disabled'
