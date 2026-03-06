@@ -191,9 +191,12 @@ class BubbleUI:
 
         self._draw_bubble(translation)
         self._position_near_cursor()
-        # Use SW_SHOWNOACTIVATE (4) instead of deiconify() / SW_SHOWNORMAL (1).
-        # deiconify() activates the window, which can steal focus from the
-        # active application even when WS_EX_NOACTIVATE is set.
+        # deiconify() must be called first so tkinter's internal state
+        # transitions from "withdrawn" to "normal" — bypassing it confuses the
+        # event loop, which re-hides the window on the next tick.
+        self._win.deiconify()   # type: ignore[union-attr]
+        # Immediately override the SW_SHOWNORMAL that deiconify() issued with
+        # SW_SHOWNOACTIVATE (4) so the bubble never steals keyboard focus.
         ctypes.windll.user32.ShowWindow(self._win.winfo_id(), 4)  # type: ignore[union-attr]
         self._win.lift()        # type: ignore[union-attr]
         self._reset_auto_hide()
