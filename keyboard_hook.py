@@ -20,6 +20,7 @@ Key design decisions
 
 from __future__ import annotations
 
+import ctypes
 import threading
 from typing import Callable
 
@@ -27,6 +28,44 @@ from pynput import keyboard as kb
 from pynput import mouse as ms
 
 from layout_mapper import LayoutPair, DEFAULT_PAIR
+
+
+# ---------------------------------------------------------------------------
+# Win32 helpers — get the character a key produces in the foreground app's
+# keyboard layout.  pynput's listener runs in its own thread and resolves
+# characters against that thread's layout (often English even when the user's
+# active app has Hebrew/Russian/… set), so we ask Windows explicitly.
+# ---------------------------------------------------------------------------
+
+_u32 = ctypes.windll.user32
+_u32.GetForegroundWindow.restype = ctypes.c_void_p
+_u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+_u32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+_u32.GetKeyboardLayout.argtypes = [ctypes.c_ulong]
+_u32.GetKeyboardLayout.restype = ctypes.c_void_p
+_u32.MapVirtualKeyExW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+_u32.MapVirtualKeyExW.restype = ctypes.c_uint
+
+_MAPVK_VK_TO_CHAR = 2
+
+
+def _char_for_vk(vk: int) -> str | None:
+    """
+    Return the (unshifted) character the given virtual-key code produces in
+    the keyboard layout of the currently active window, or None if the key
+    does not produce a printable character.
+    """
+    hwnd = _u32.GetForegroundWindow()
+    tid = _u32.GetWindowThreadProcessId(hwnd, None)
+    hkl = _u32.GetKeyboardLayout(tid)
+    result = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_CHAR, hkl)
+    # Bit 31 set → dead key; result == 0 → no character
+    if result == 0 or (result >> 31):
+        return None
+    code = result & 0xFFFF
+    if code <= 0x1F:          # control characters
+        return None
+    return chr(code)
 
 
 class KeyboardHook:
@@ -141,41 +180,45 @@ class KeyboardHook:
         if self.is_replacing or not self._enabled:
             return
 
-        try:
-            char: str | None = key.char  # type: ignore[union-attr]
-        except AttributeError:
-            char = None
-
-        if char is not None:
-            # Space, tab, newline → word boundary
-            if char in (' ', '\t', '\n', '\r'):
-                self._clear_buffer()
-                return
-
-            # Accumulate only characters that belong to the active pair;
-            # anything else (digit, punctuation not in either layout) clears.
-            if char in self._pair.tracked_chars:
+        # --- special keys (Key enum members) ---
+        if isinstance(key, kb.Key):
+            if key == kb.Key.backspace:
                 with self._lock:
-                    self._buffer += char
+                    if self._buffer:
+                        self._buffer = self._buffer[:-1]
                 self._notify()
-            else:
+            elif key in (kb.Key.space, kb.Key.enter, kb.Key.tab,
+                         kb.Key.esc, kb.Key.delete):
+                self._clear_buffer()
+            elif key in (kb.Key.left, kb.Key.right, kb.Key.up, kb.Key.down,
+                         kb.Key.home, kb.Key.end, kb.Key.page_up, kb.Key.page_down):
                 self._clear_buffer()
             return
 
-        # --- special keys ---
-        if key == kb.Key.backspace:
-            with self._lock:
-                if self._buffer:
-                    self._buffer = self._buffer[:-1]
-            self._notify()
+        # --- regular character key (KeyCode) ---
+        if not isinstance(key, kb.KeyCode):
             return
 
-        if key in (kb.Key.space, kb.Key.enter, kb.Key.tab,
-                   kb.Key.esc, kb.Key.delete):
+        # Resolve the character using the FOREGROUND WINDOW's keyboard layout.
+        # pynput's listener thread may carry a different (e.g. English) layout
+        # than the app the user is currently typing in, so key.char would give
+        # the wrong character when, say, Hebrew or Russian is active.
+        vk: int | None = getattr(key, 'vk', None)
+        char: str | None = _char_for_vk(vk) if vk else key.char
+
+        if char is None:
+            return
+
+        # Space / tab / newline produced as a character → word boundary
+        if char in (' ', '\t', '\n', '\r'):
             self._clear_buffer()
             return
 
-        # Cursor movement keys: context is lost, reset buffer
-        if key in (kb.Key.left, kb.Key.right, kb.Key.up, kb.Key.down,
-                   kb.Key.home, kb.Key.end, kb.Key.page_up, kb.Key.page_down):
+        # Accumulate only characters that belong to the active pair;
+        # anything else (digit, punctuation not in either layout) clears.
+        if char in self._pair.tracked_chars:
+            with self._lock:
+                self._buffer += char
+            self._notify()
+        else:
             self._clear_buffer()

@@ -123,6 +123,16 @@ class BubbleUI:
         self._win = win
         self._canvas = canvas
 
+        # Prevent clicking the bubble from stealing focus away from the active
+        # application.  Without this, backspace/type keystrokes land on the
+        # bubble window instead of the app the user was typing in.
+        win.update_idletasks()
+        _GWL_EXSTYLE = -20
+        _WS_EX_NOACTIVATE = 0x08000000
+        hwnd = win.winfo_id()
+        current = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+        ctypes.windll.user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, current | _WS_EX_NOACTIVATE)
+
     def _draw_bubble(self, text: str) -> None:
         """Redraw the canvas with a rounded-rectangle bubble and the given text."""
         canvas = self._canvas
