@@ -70,16 +70,65 @@ _MAPVK_VK_TO_VSC  = 0   # VK → scan code (needed by ToUnicodeEx)
 _OUR_PID = ctypes.windll.kernel32.GetCurrentProcessId()
 
 
-def _char_for_vk(vk: int, hwnd: int | None = None) -> str | None:
+# GUITHREADINFO lets us find the *focused* child-window within the foreground
+# thread — necessary because GetForegroundWindow() returns the top-level frame,
+# but in multi-threaded apps (browsers, VS Code, terminals …) the actual
+# keyboard-input thread belongs to a child HWND whose HKL may differ.
+class _GUITHREADINFO(ctypes.Structure):
+    _fields_ = [
+        ('cbSize',        ctypes.c_ulong),
+        ('flags',         ctypes.c_ulong),
+        ('hwndActive',    ctypes.c_void_p),
+        ('hwndFocus',     ctypes.c_void_p),   # ← actual focused control
+        ('hwndCapture',   ctypes.c_void_p),
+        ('hwndMenuOwner', ctypes.c_void_p),
+        ('hwndMoveSize',  ctypes.c_void_p),
+        ('hwndCaret',     ctypes.c_void_p),
+        ('rcCaret',       ctypes.c_long * 4), # RECT (left, top, right, bottom)
+    ]
+
+_u32.GetGUIThreadInfo.argtypes = [ctypes.c_ulong, ctypes.POINTER(_GUITHREADINFO)]
+_u32.GetGUIThreadInfo.restype  = ctypes.c_int
+
+
+def _focused_hwnd_and_hkl(exclude_pid: int) -> tuple[int, ctypes.c_void_p]:
+    """
+    Return (hwnd, hkl) for the truly focused window, skipping our own process.
+
+    GetGUIThreadInfo(0) queries the foreground thread and returns hwndFocus —
+    the actual focused control — which differs from the top-level foreground
+    window in multi-threaded apps.  Falling back to GetForegroundWindow() when
+    GetGUIThreadInfo fails.
+    """
+    info = _GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(_GUITHREADINFO)
+    pid = ctypes.c_ulong(0)
+
+    if _u32.GetGUIThreadInfo(0, ctypes.byref(info)):
+        # Prefer hwndFocus; fall back to hwndActive within the same call
+        for candidate in (info.hwndFocus, info.hwndActive):
+            if candidate:
+                _u32.GetWindowThreadProcessId(candidate, ctypes.byref(pid))
+                if pid.value and pid.value != exclude_pid:
+                    tid = _u32.GetWindowThreadProcessId(candidate, None)
+                    return int(candidate), _u32.GetKeyboardLayout(tid)
+
+    # Fallback: plain GetForegroundWindow
+    fg = _u32.GetForegroundWindow()
+    if fg:
+        _u32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+        if pid.value and pid.value != exclude_pid:
+            tid = _u32.GetWindowThreadProcessId(fg, None)
+            return int(fg), _u32.GetKeyboardLayout(tid)
+
+    return 0, None
+
+
+def _char_for_vk(vk: int, hkl: ctypes.c_void_p) -> str | None:
     """
     Return the (unshifted) character the given virtual-key code produces in
-    the keyboard layout of *hwnd* (defaults to the current foreground window).
-    Returns None if the key does not produce a printable character.
+    *hkl*.  Returns None if the key does not produce a printable character.
     """
-    if not hwnd:
-        hwnd = _u32.GetForegroundWindow()
-    tid = _u32.GetWindowThreadProcessId(hwnd, None)
-    hkl = _u32.GetKeyboardLayout(tid)
 
     # --- primary: ToUnicodeEx (works reliably for all layouts) ---
     scan = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
@@ -130,11 +179,11 @@ class KeyboardHook:
         self._pair: LayoutPair = pair or DEFAULT_PAIR
         self._buffer: str = ''
         self._lock = threading.Lock()
-        # Last foreground HWND that belongs to a different process (i.e. the
-        # real text editor).  Updated on every keystroke; used for keyboard-
-        # layout lookup so that our own bubble window (which always carries an
-        # English HKL) doesn't pollute _char_for_vk() results.
+        # Last non-our-process focused HWND and its HKL.  Updated on every
+        # keystroke via GetGUIThreadInfo so we always use the editor's actual
+        # keyboard layout (including when our bubble is briefly in the foreground).
         self._editor_hwnd: int = 0
+        self._editor_hkl: ctypes.c_void_p | None = None
 
         # Set True during text injection so injected keystrokes are ignored.
         # Reset via finish_replace() which clears the buffer first.
@@ -257,29 +306,22 @@ class KeyboardHook:
         if not isinstance(key, kb.KeyCode):
             return
 
-        # Cache the foreground HWND whenever it belongs to a different process
-        # (i.e. the real text editor).  This avoids using our own bubble window's
-        # English HKL when deiconify() momentarily steals the foreground.
-        cur_hwnd = _u32.GetForegroundWindow()
-        pid = ctypes.c_ulong(0)
-        _u32.GetWindowThreadProcessId(cur_hwnd, ctypes.byref(pid))
-        if pid.value and pid.value != _OUR_PID:
-            self._editor_hwnd = cur_hwnd
+        # GetGUIThreadInfo(0) gives the focused *child* control within the
+        # foreground thread — important for multi-threaded apps (browsers,
+        # VS Code, terminals) where GetForegroundWindow() returns the top-level
+        # frame but the actual input thread (and its HKL) belongs to a child.
+        # We cache the last valid (non-our-process) hwnd so that if our bubble
+        # momentarily steals the foreground we keep using the editor's HKL.
+        hwnd, hkl = _focused_hwnd_and_hkl(_OUR_PID)
+        if hwnd:
+            self._editor_hwnd = hwnd
+            self._editor_hkl  = hkl
+        else:
+            # Bubble or unknown window is foreground — reuse last known HKL.
+            hkl = getattr(self, '_editor_hkl', None)
 
-        # Resolve the character using the FOREGROUND WINDOW's keyboard layout.
-        # pynput's listener thread may carry a different (e.g. English) layout
-        # than the app the user is currently typing in, so key.char would give
-        # the wrong character when, say, Hebrew or Russian is active.
-        # Fall back to pynput's own resolution if the Win32 lookup fails.
         vk: int | None = getattr(key, 'vk', None)
-        # When we have a virtual-key code, resolve the character exclusively
-        # via the foreground window's keyboard layout (HKL).  Do NOT fall
-        # back to pynput's key.char: pynput's listener thread keeps whatever
-        # layout was active at thread-creation time (usually English), so
-        # key.char is always an English letter even when the user has switched
-        # to Hebrew/Russian/… in the editor — causing the buffer to always
-        # accumulate English chars and the bubble to always suggest Hebrew.
-        char: str | None = _char_for_vk(vk, self._editor_hwnd or None) if vk else key.char
+        char: str | None = _char_for_vk(vk, hkl) if (vk and hkl) else None
 
         if char is None:
             return

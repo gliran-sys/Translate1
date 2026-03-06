@@ -94,26 +94,23 @@ class BubbleUI:
     # ------------------------------------------------------------------
 
     def contains_point(self, x: int, y: int) -> bool:
-        """Return True if screen point (x, y) is inside the visible bubble.
+        """Return True if the cursor is currently inside the visible bubble.
 
         Safe to call from any thread (reads a single tuple reference).
 
-        Uses WindowFromPoint rather than a stored rect so that physical-pixel
-        coordinates from pynput's low-level mouse hook match the window
-        correctly on DPI-scaled displays (where GetWindowRect returns logical
-        pixels and the two coordinate spaces differ).
+        We call GetCursorPos() ourselves rather than trusting pynput's x, y
+        because pynput's WH_MOUSE_LL hook delivers *physical* pixels while
+        winfo_rootx/y (used to build _bubble_rect) return *logical* pixels.
+        GetCursorPos also returns logical pixels, so the two coordinate spaces
+        match exactly regardless of DPI scaling.
         """
-        if self._win is None or self._bubble_rect is None:
+        rect = self._bubble_rect
+        if rect is None:
             return False
         pt = _POINT()
-        pt.x = x
-        pt.y = y
-        hwnd_at = ctypes.windll.user32.WindowFromPoint(pt)
-        if not hwnd_at:
-            return False
-        our_hwnd = self._win.winfo_id()
-        return (hwnd_at == our_hwnd
-                or bool(ctypes.windll.user32.IsChild(our_hwnd, hwnd_at)))
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        rx, ry, rw, rh = rect
+        return rx <= pt.x < rx + rw and ry <= pt.y < ry + rh
 
     def update(self, buffer: str, translation: str | None) -> None:
         """
@@ -244,13 +241,21 @@ class BubbleUI:
             _u32.SetForegroundWindow(prev_fg)
         self._win.lift()        # type: ignore[union-attr]
 
-        # Record the bubble's physical screen rect NOW, after the window is
-        # shown and positioned.  GetWindowRect returns physical pixels and
-        # matches pynput's coordinate space regardless of DPI scaling, unlike
-        # winfo_width()/winfo_height() which may be in logical (scaled) pixels.
-        rc = _RECT()
-        ctypes.windll.user32.GetWindowRect(self._win.winfo_id(), ctypes.byref(rc))  # type: ignore[union-attr]
-        self._bubble_rect = (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+        # Flush all pending Tcl/Tk geometry commands (deiconify + geometry) to
+        # Win32 before we read back winfo_rootx/y.  Without this the geometry
+        # '+x+y' command may still be queued and winfo_rootx() returns stale
+        # coordinates, causing contains_point() to miss every click.
+        self._win.update_idletasks()   # type: ignore[union-attr]
+
+        # Store the bubble rect in *logical* pixels (winfo_rootx/y returns
+        # logical pixels from tkinter's perspective, consistent with
+        # GetCursorPos which also returns logical pixels).
+        self._bubble_rect = (
+            self._win.winfo_rootx(),    # type: ignore[union-attr]
+            self._win.winfo_rooty(),    # type: ignore[union-attr]
+            self._win.winfo_width(),    # type: ignore[union-attr]
+            self._win.winfo_height(),   # type: ignore[union-attr]
+        )
 
         self._reset_auto_hide()
 
