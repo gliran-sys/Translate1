@@ -28,7 +28,7 @@ from pynput import keyboard as kb
 
 from bubble_ui import BubbleUI
 from keyboard_hook import KeyboardHook
-from layout_mapper import build_all_pairs, DEFAULT_PAIR, LayoutPair
+from layout_mapper import build_installed_pairs, DEFAULT_PAIR, LayoutPair
 from system_tray import SystemTray
 
 
@@ -77,7 +77,13 @@ def _replace_text(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    available_pairs = build_all_pairs()
+    available_pairs = build_installed_pairs()
+    # Use the first installed pair as default; fall back to DEFAULT_PAIR if
+    # the installed set happens not to include English↔Hebrew.
+    initial_pair = next(
+        (p for p in available_pairs if p.name == DEFAULT_PAIR.name),
+        available_pairs[0],
+    )
 
     # Hidden root window; only the bubble Toplevel is ever visible
     root = tk.Tk()
@@ -96,7 +102,7 @@ def main() -> None:
     def on_buffer_change(buffer: str, translation: str | None) -> None:
         bubble.update(buffer, translation)
 
-    hook = KeyboardHook(on_change=on_buffer_change, pair=DEFAULT_PAIR)
+    hook = KeyboardHook(on_change=on_buffer_change, pair=initial_pair)
 
     def on_toggle(enabled: bool) -> None:
         hook.set_enabled(enabled)
@@ -110,7 +116,7 @@ def main() -> None:
 
     tray = SystemTray(
         available_pairs=available_pairs,
-        initial_pair=DEFAULT_PAIR,
+        initial_pair=initial_pair,
         on_toggle=on_toggle,
         on_pair_change=on_pair_change,
         on_exit=on_exit,

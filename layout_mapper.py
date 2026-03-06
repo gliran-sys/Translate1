@@ -16,6 +16,8 @@ available as part of any LayoutPair combination.
 
 from __future__ import annotations
 
+import winreg
+
 # ---------------------------------------------------------------------------
 # Built-in layout definitions
 # Physical QWERTY key label (lowercase) → character produced by that key
@@ -175,6 +177,53 @@ class LayoutPair:
 # Convenience: pre-built pairs and defaults
 # ---------------------------------------------------------------------------
 
+# Maps the 4-hex-digit Windows LCID suffix to a LAYOUTS name.
+# A keyboard layout code (KLID) looks like "0000040d"; the last 4 chars are
+# the locale ID, so Hebrew "040d" → "Hebrew", Russian "0419" → "Russian", etc.
+_LCID_TO_LANG: dict[str, str] = {
+    # English variants
+    '0409': 'English', '0809': 'English', '0c09': 'English',
+    '1009': 'English', '1409': 'English', '1809': 'English',
+    # Hebrew
+    '040d': 'Hebrew',
+    # Russian
+    '0419': 'Russian',
+    # Arabic variants
+    '0401': 'Arabic', '0801': 'Arabic', '0c01': 'Arabic',
+    '1001': 'Arabic', '1401': 'Arabic', '1801': 'Arabic',
+    # Greek
+    '0408': 'Greek',
+}
+
+
+def _installed_layout_names() -> list[str]:
+    """
+    Read HKCU\\Keyboard Layout\\Preload and return the LAYOUTS names that
+    correspond to the user's installed Windows keyboard layouts.
+    Falls back to all LAYOUTS names if the registry key is unavailable.
+    """
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Keyboard Layout\Preload')
+        found: set[str] = set()
+        i = 0
+        while True:
+            try:
+                _, klid, _ = winreg.EnumValue(key, i)
+                lcid = str(klid).lower().zfill(8)[-4:]
+                lang = _LCID_TO_LANG.get(lcid)
+                if lang and lang in LAYOUTS:
+                    found.add(lang)
+                i += 1
+            except OSError:
+                break
+        winreg.CloseKey(key)
+        if found:
+            return list(found)
+    except OSError:
+        pass
+    return list(LAYOUTS)
+
+
 def build_all_pairs() -> list[LayoutPair]:
     """Return one LayoutPair for every unique combination in LAYOUTS."""
     names = list(LAYOUTS)
@@ -183,6 +232,19 @@ def build_all_pairs() -> list[LayoutPair]:
         for b in names[i + 1:]:
             pairs.append(LayoutPair(a, b))
     return pairs
+
+
+def build_installed_pairs() -> list[LayoutPair]:
+    """
+    Return LayoutPairs only for the keyboard layouts the user has installed
+    in Windows.  Falls back to build_all_pairs() if detection fails.
+    """
+    names = _installed_layout_names()
+    pairs: list[LayoutPair] = []
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            pairs.append(LayoutPair(a, b))
+    return pairs or build_all_pairs()
 
 
 DEFAULT_PAIR = LayoutPair("English", "Hebrew")

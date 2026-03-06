@@ -203,8 +203,9 @@ class KeyboardHook:
         # pynput's listener thread may carry a different (e.g. English) layout
         # than the app the user is currently typing in, so key.char would give
         # the wrong character when, say, Hebrew or Russian is active.
+        # Fall back to pynput's own resolution if the Win32 lookup fails.
         vk: int | None = getattr(key, 'vk', None)
-        char: str | None = _char_for_vk(vk) if vk else key.char
+        char: str | None = (_char_for_vk(vk) if vk else None) or key.char
 
         if char is None:
             return
