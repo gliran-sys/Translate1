@@ -97,12 +97,23 @@ class BubbleUI:
         """Return True if screen point (x, y) is inside the visible bubble.
 
         Safe to call from any thread (reads a single tuple reference).
+
+        Uses WindowFromPoint rather than a stored rect so that physical-pixel
+        coordinates from pynput's low-level mouse hook match the window
+        correctly on DPI-scaled displays (where GetWindowRect returns logical
+        pixels and the two coordinate spaces differ).
         """
-        rect = self._bubble_rect
-        if rect is None:
+        if self._win is None or self._bubble_rect is None:
             return False
-        rx, ry, rw, rh = rect
-        return rx <= x < rx + rw and ry <= y < ry + rh
+        pt = _POINT()
+        pt.x = x
+        pt.y = y
+        hwnd_at = ctypes.windll.user32.WindowFromPoint(pt)
+        if not hwnd_at:
+            return False
+        our_hwnd = self._win.winfo_id()
+        return (hwnd_at == our_hwnd
+                or bool(ctypes.windll.user32.IsChild(our_hwnd, hwnd_at)))
 
     def update(self, buffer: str, translation: str | None) -> None:
         """

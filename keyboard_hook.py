@@ -85,8 +85,15 @@ def _char_for_vk(vk: int, hwnd: int | None = None) -> str | None:
     scan = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
     key_state = (ctypes.c_byte * 256)()          # all-zero = no modifiers
     buf = ctypes.create_unicode_buffer(8)
-    # wFlags=4 → DONT_CHANGE_DEAD_KEY_STATE (avoids side-effects)
-    n = _ToUnicodeEx(vk, scan, key_state, buf, len(buf) - 1, 4, hkl)
+    # wFlags=0: the only value guaranteed to work on all Windows versions.
+    # wFlags=4 (DONT_CHANGE_DEAD_KEY_STATE) was added in Windows 10 1703;
+    # on older builds it causes ToUnicodeEx to return 0 for every key.
+    n = _ToUnicodeEx(vk, scan, key_state, buf, len(buf) - 1, 0, hkl)
+    if n == -1:
+        # This VK is a dead key — flush the pending dead-key state so the
+        # next call isn't affected, then report "no character".
+        _ToUnicodeEx(0x20, 0, key_state, buf, len(buf) - 1, 0, hkl)
+        return None
     if n == 1:
         ch = buf[0]
         if ch and ord(ch) > 0x1F:
@@ -265,7 +272,14 @@ class KeyboardHook:
         # the wrong character when, say, Hebrew or Russian is active.
         # Fall back to pynput's own resolution if the Win32 lookup fails.
         vk: int | None = getattr(key, 'vk', None)
-        char: str | None = (_char_for_vk(vk, self._editor_hwnd or None) if vk else None) or key.char
+        # When we have a virtual-key code, resolve the character exclusively
+        # via the foreground window's keyboard layout (HKL).  Do NOT fall
+        # back to pynput's key.char: pynput's listener thread keeps whatever
+        # layout was active at thread-creation time (usually English), so
+        # key.char is always an English letter even when the user has switched
+        # to Hebrew/Russian/… in the editor — causing the buffer to always
+        # accumulate English chars and the bubble to always suggest Hebrew.
+        char: str | None = _char_for_vk(vk, self._editor_hwnd or None) if vk else key.char
 
         if char is None:
             return
