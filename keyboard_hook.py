@@ -50,16 +50,20 @@ _u32.GetKeyboardLayout.argtypes = [ctypes.c_ulong]
 _u32.GetKeyboardLayout.restype = ctypes.c_void_p
 _u32.MapVirtualKeyExW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
 _u32.MapVirtualKeyExW.restype = ctypes.c_uint
-_u32.ToUnicodeEx.argtypes = [
+
+# Use a private CDLL-style function pointer for ToUnicodeEx so we don't mutate
+# the shared windll.user32.ToUnicodeEx argtypes — pynput also calls ToUnicodeEx
+# with its own signature and a global argtypes change causes ArgumentError.
+_ToUnicodeEx = ctypes.WINFUNCTYPE(
+    ctypes.c_int,
     ctypes.c_uint,                   # wVirtKey
     ctypes.c_uint,                   # wScanCode
     ctypes.POINTER(ctypes.c_byte),   # lpKeyState (256 bytes)
     ctypes.c_wchar_p,                # pwszBuff
     ctypes.c_int,                    # cchBuff
-    ctypes.c_uint,                   # wFlags (4 = DONT_CHANGE_DEAD_KEY_STATE)
+    ctypes.c_uint,                   # wFlags
     ctypes.c_void_p,                 # dwhkl
-]
-_u32.ToUnicodeEx.restype = ctypes.c_int
+)(ctypes.windll.user32.ToUnicodeEx)
 
 _MAPVK_VK_TO_CHAR = 2
 _MAPVK_VK_TO_VSC  = 0   # VK → scan code (needed by ToUnicodeEx)
@@ -82,7 +86,7 @@ def _char_for_vk(vk: int, hwnd: int | None = None) -> str | None:
     key_state = (ctypes.c_byte * 256)()          # all-zero = no modifiers
     buf = ctypes.create_unicode_buffer(8)
     # wFlags=4 → DONT_CHANGE_DEAD_KEY_STATE (avoids side-effects)
-    n = _u32.ToUnicodeEx(vk, scan, key_state, buf, len(buf) - 1, 4, hkl)
+    n = _ToUnicodeEx(vk, scan, key_state, buf, len(buf) - 1, 4, hkl)
     if n == 1:
         ch = buf[0]
         if ch and ord(ch) > 0x1F:
