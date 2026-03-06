@@ -77,12 +77,27 @@ class BubbleUI:
         self._win: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
         self._text_id: int | None = None
+        # Screen rect of the visible bubble (x, y, w, h), or None when hidden.
+        # Written on the tkinter main thread; read from pynput's mouse thread.
+        # A tuple assignment is atomic under CPython's GIL so no lock is needed.
+        self._bubble_rect: tuple[int, int, int, int] | None = None
 
         self._build_window()
 
     # ------------------------------------------------------------------
     # Public API (thread-safe via root.after)
     # ------------------------------------------------------------------
+
+    def contains_point(self, x: int, y: int) -> bool:
+        """Return True if screen point (x, y) is inside the visible bubble.
+
+        Safe to call from any thread (reads a single tuple reference).
+        """
+        rect = self._bubble_rect
+        if rect is None:
+            return False
+        rx, ry, rw, rh = rect
+        return rx <= x < rx + rw and ry <= y < ry + rh
 
     def update(self, buffer: str, translation: str | None) -> None:
         """
@@ -219,8 +234,10 @@ class BubbleUI:
         y = max(0, min(y, screen_h - h))
 
         self._win.geometry(f'+{x}+{y}')
+        self._bubble_rect = (x, y, w, h)
 
     def _hide(self) -> None:
+        self._bubble_rect = None
         if self._win:
             self._win.withdraw()
         self._cancel_auto_hide()

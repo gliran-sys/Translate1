@@ -102,7 +102,11 @@ def main() -> None:
     def on_buffer_change(buffer: str, translation: str | None) -> None:
         bubble.update(buffer, translation)
 
-    hook = KeyboardHook(on_change=on_buffer_change, pair=initial_pair)
+    hook = KeyboardHook(
+        on_change=on_buffer_change,
+        pair=initial_pair,
+        is_click_on_bubble=bubble.contains_point,
+    )
 
     def on_toggle(enabled: bool) -> None:
         hook.set_enabled(enabled)

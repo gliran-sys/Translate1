@@ -80,8 +80,10 @@ class KeyboardHook:
         self,
         on_change: Callable[[str, str | None], None],
         pair: LayoutPair | None = None,
+        is_click_on_bubble: Callable[[int, int], bool] | None = None,
     ) -> None:
         self._on_change = on_change
+        self._is_click_on_bubble = is_click_on_bubble
         self._pair: LayoutPair = pair or DEFAULT_PAIR
         self._buffer: str = ''
         self._lock = threading.Lock()
@@ -168,8 +170,12 @@ class KeyboardHook:
         button: ms.Button,  # noqa: ARG002
         pressed: bool,
     ) -> None:
-        # Only react on button-down, not release, and not during injection
+        # Only react on button-down, not release, and not during injection.
+        # Skip if the click landed on the translation bubble — BubbleUI's own
+        # <Button-1> handler will fire next and trigger the replacement.
         if pressed and not self.is_replacing:
+            if self._is_click_on_bubble and self._is_click_on_bubble(x, y):
+                return
             self._clear_buffer()
 
     # ------------------------------------------------------------------
