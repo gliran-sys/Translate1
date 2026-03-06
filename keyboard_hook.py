@@ -35,6 +35,11 @@ from layout_mapper import LayoutPair, DEFAULT_PAIR
 # keyboard layout.  pynput's listener runs in its own thread and resolves
 # characters against that thread's layout (often English even when the user's
 # active app has Hebrew/Russian/… set), so we ask Windows explicitly.
+#
+# We use ToUnicodeEx rather than MapVirtualKeyExW(MAPVK_VK_TO_CHAR) because
+# the latter silently returns 0 for many non-Latin layouts (Hebrew, Arabic,
+# CJK) on Windows 10/11, whereas ToUnicodeEx is the canonical API for
+# "what Unicode character does this VK produce in this HKL?"
 # ---------------------------------------------------------------------------
 
 _u32 = ctypes.windll.user32
@@ -45,27 +50,52 @@ _u32.GetKeyboardLayout.argtypes = [ctypes.c_ulong]
 _u32.GetKeyboardLayout.restype = ctypes.c_void_p
 _u32.MapVirtualKeyExW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
 _u32.MapVirtualKeyExW.restype = ctypes.c_uint
+_u32.ToUnicodeEx.argtypes = [
+    ctypes.c_uint,                   # wVirtKey
+    ctypes.c_uint,                   # wScanCode
+    ctypes.POINTER(ctypes.c_byte),   # lpKeyState (256 bytes)
+    ctypes.c_wchar_p,                # pwszBuff
+    ctypes.c_int,                    # cchBuff
+    ctypes.c_uint,                   # wFlags (4 = DONT_CHANGE_DEAD_KEY_STATE)
+    ctypes.c_void_p,                 # dwhkl
+]
+_u32.ToUnicodeEx.restype = ctypes.c_int
 
 _MAPVK_VK_TO_CHAR = 2
+_MAPVK_VK_TO_VSC  = 0   # VK → scan code (needed by ToUnicodeEx)
+_OUR_PID = ctypes.windll.kernel32.GetCurrentProcessId()
 
 
-def _char_for_vk(vk: int) -> str | None:
+def _char_for_vk(vk: int, hwnd: int | None = None) -> str | None:
     """
     Return the (unshifted) character the given virtual-key code produces in
-    the keyboard layout of the currently active window, or None if the key
-    does not produce a printable character.
+    the keyboard layout of *hwnd* (defaults to the current foreground window).
+    Returns None if the key does not produce a printable character.
     """
-    hwnd = _u32.GetForegroundWindow()
+    if not hwnd:
+        hwnd = _u32.GetForegroundWindow()
     tid = _u32.GetWindowThreadProcessId(hwnd, None)
     hkl = _u32.GetKeyboardLayout(tid)
+
+    # --- primary: ToUnicodeEx (works reliably for all layouts) ---
+    scan = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
+    key_state = (ctypes.c_byte * 256)()          # all-zero = no modifiers
+    buf = ctypes.create_unicode_buffer(8)
+    # wFlags=4 → DONT_CHANGE_DEAD_KEY_STATE (avoids side-effects)
+    n = _u32.ToUnicodeEx(vk, scan, key_state, buf, len(buf) - 1, 4, hkl)
+    if n == 1:
+        ch = buf[0]
+        if ch and ord(ch) > 0x1F:
+            return ch
+
+    # --- fallback: MapVirtualKeyExW (Latin layouts, older Windows) ---
     result = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_CHAR, hkl)
-    # Bit 31 set → dead key; result == 0 → no character
-    if result == 0 or (result >> 31):
-        return None
-    code = result & 0xFFFF
-    if code <= 0x1F:          # control characters
-        return None
-    return chr(code)
+    if result and not (result >> 31):
+        code = result & 0xFFFF
+        if code > 0x1F:
+            return chr(code)
+
+    return None
 
 
 class KeyboardHook:
@@ -89,6 +119,11 @@ class KeyboardHook:
         self._pair: LayoutPair = pair or DEFAULT_PAIR
         self._buffer: str = ''
         self._lock = threading.Lock()
+        # Last foreground HWND that belongs to a different process (i.e. the
+        # real text editor).  Updated on every keystroke; used for keyboard-
+        # layout lookup so that our own bubble window (which always carries an
+        # English HKL) doesn't pollute _char_for_vk() results.
+        self._editor_hwnd: int = 0
 
         # Set True during text injection so injected keystrokes are ignored.
         # Reset via finish_replace() which clears the buffer first.
@@ -211,13 +246,22 @@ class KeyboardHook:
         if not isinstance(key, kb.KeyCode):
             return
 
+        # Cache the foreground HWND whenever it belongs to a different process
+        # (i.e. the real text editor).  This avoids using our own bubble window's
+        # English HKL when deiconify() momentarily steals the foreground.
+        cur_hwnd = _u32.GetForegroundWindow()
+        pid = ctypes.c_ulong(0)
+        _u32.GetWindowThreadProcessId(cur_hwnd, ctypes.byref(pid))
+        if pid.value and pid.value != _OUR_PID:
+            self._editor_hwnd = cur_hwnd
+
         # Resolve the character using the FOREGROUND WINDOW's keyboard layout.
         # pynput's listener thread may carry a different (e.g. English) layout
         # than the app the user is currently typing in, so key.char would give
         # the wrong character when, say, Hebrew or Russian is active.
         # Fall back to pynput's own resolution if the Win32 lookup fails.
         vk: int | None = getattr(key, 'vk', None)
-        char: str | None = (_char_for_vk(vk) if vk else None) or key.char
+        char: str | None = (_char_for_vk(vk, self._editor_hwnd or None) if vk else None) or key.char
 
         if char is None:
             return
