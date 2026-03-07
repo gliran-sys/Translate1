@@ -51,11 +51,19 @@ _u32.GetKeyboardLayout.restype = ctypes.c_void_p
 _u32.MapVirtualKeyExW.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
 _u32.MapVirtualKeyExW.restype = ctypes.c_uint
 
-# Use a private CDLL-style function pointer for ToUnicodeEx so we don't mutate
-# the shared windll.user32.ToUnicodeEx argtypes — pynput also calls ToUnicodeEx
-# with its own signature and a global argtypes change causes ArgumentError.
-_ToUnicodeEx = ctypes.WINFUNCTYPE(
-    ctypes.c_int,
+# ToUnicodeEx: use a *private* WinDLL instance so our argtypes declaration never
+# touches ctypes.windll.user32.ToUnicodeEx.
+#
+# ctypes.windll.user32 is a module-level singleton; every attribute access
+# returns the SAME cached Python function object.  Setting .argtypes on it, or
+# passing it to WINFUNCTYPE(...)(func) (which implicitly binds argtypes), makes
+# pynput's own ToUnicodeEx call fail with "expected LP_c_byte instance instead
+# of pointer to c_ubyte_Array_255".
+#
+# ctypes.WinDLL('user32') creates a fresh WinDLL Python object with its own
+# per-instance function-object cache, so argtypes set here are fully isolated.
+_priv_u32 = ctypes.WinDLL('user32')
+_priv_u32.ToUnicodeEx.argtypes = [
     ctypes.c_uint,                   # wVirtKey
     ctypes.c_uint,                   # wScanCode
     ctypes.POINTER(ctypes.c_byte),   # lpKeyState (256 bytes)
@@ -63,7 +71,9 @@ _ToUnicodeEx = ctypes.WINFUNCTYPE(
     ctypes.c_int,                    # cchBuff
     ctypes.c_uint,                   # wFlags
     ctypes.c_void_p,                 # dwhkl
-)(ctypes.windll.user32.ToUnicodeEx)
+]
+_priv_u32.ToUnicodeEx.restype = ctypes.c_int
+_ToUnicodeEx = _priv_u32.ToUnicodeEx
 
 _MAPVK_VK_TO_CHAR = 2
 _MAPVK_VK_TO_VSC  = 0   # VK → scan code (needed by ToUnicodeEx)

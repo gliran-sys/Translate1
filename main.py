@@ -60,9 +60,15 @@ _INPUT_KEYBOARD   = 1
 _KEYEVENTF_UNICODE = 0x0004
 _KEYEVENTF_KEYUP   = 0x0002
 
-_send_input = ctypes.windll.user32.SendInput
-_send_input.argtypes = [ctypes.c_uint, ctypes.POINTER(_INPUT), ctypes.c_int]
-_send_input.restype  = ctypes.c_uint
+# SendInput: same isolation strategy as ToUnicodeEx in keyboard_hook.py.
+# pynput's keyboard Controller also calls windll.user32.SendInput with its own
+# INPUT struct; setting argtypes on the shared singleton causes
+# "expected LP__INPUT instance instead of pointer to INPUT" when pynput's
+# controller.press() runs.  A private WinDLL instance fixes this.
+_priv_u32 = ctypes.WinDLL('user32')
+_priv_u32.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(_INPUT), ctypes.c_int]
+_priv_u32.SendInput.restype  = ctypes.c_uint
+_send_input = _priv_u32.SendInput
 
 
 def _type_unicode(text: str) -> None:
