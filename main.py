@@ -38,6 +38,17 @@ from system_tray import SystemTray
 # Unicode-safe keystroke injection (bypasses the active keyboard layout)
 # ---------------------------------------------------------------------------
 
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ('dx',          ctypes.c_long),
+        ('dy',          ctypes.c_long),
+        ('mouseData',   ctypes.c_ulong),
+        ('dwFlags',     ctypes.c_ulong),
+        ('time',        ctypes.c_ulong),
+        ('dwExtraInfo', ctypes.c_void_p),
+    ]
+
+
 class _KEYBDINPUT(ctypes.Structure):
     _fields_ = [
         ('wVk',         ctypes.c_ushort),
@@ -48,8 +59,23 @@ class _KEYBDINPUT(ctypes.Structure):
     ]
 
 
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ('uMsg',    ctypes.c_ulong),
+        ('wParamL', ctypes.c_ushort),
+        ('wParamH', ctypes.c_ushort),
+    ]
+
+
 class _INPUT_UNION(ctypes.Union):
-    _fields_ = [('ki', _KEYBDINPUT)]
+    # All three members must be present so the union's size matches the largest
+    # member (MOUSEINPUT).  Without MOUSEINPUT, sizeof(_INPUT) is too small and
+    # SendInput silently rejects the call (returns 0, ERROR_INVALID_PARAMETER).
+    _fields_ = [
+        ('mi', _MOUSEINPUT),
+        ('ki', _KEYBDINPUT),
+        ('hi', _HARDWAREINPUT),
+    ]
 
 
 class _INPUT(ctypes.Structure):
@@ -106,6 +132,8 @@ def _replace_text(
       4. Call finish_replace()   — clears buffer THEN sets is_replacing=False
                                    (prevents injected chars bleeding into buffer)
     """
+    # DEBUG — remove after confirming replacement works
+    print(f"[DEBUG] _replace_text: '{original}' -> '{translation}'")
     hook.is_replacing = True
     try:
         # Short delay so any in-flight click event resolves before injection

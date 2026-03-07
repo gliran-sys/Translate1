@@ -315,6 +315,8 @@ class BubbleUI:
         first of the two callers actually fires the replacement."""
         buf = self._current_buffer
         trans = self._current_translation
+        # DEBUG — remove after confirming click flow works
+        print(f"[DEBUG] _do_replace: buf='{buf}' trans='{trans}'")
         if buf and trans:
             # Clear immediately so a concurrent call from the other path sees
             # empty values and does nothing.
