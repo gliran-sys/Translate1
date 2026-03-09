@@ -139,6 +139,18 @@ def _replace_text(
         # Short delay so any in-flight click event resolves before injection
         time.sleep(0.05)
 
+        # Re-focus the editor window.  Clicking the bubble can steal keyboard
+        # focus on some Windows builds even with WS_EX_NOACTIVATE set; if focus
+        # is on our bubble window, backspace and typed characters land there
+        # (and are silently discarded) instead of in the text editor.
+        # Our process received the click input event, so Windows grants us
+        # permission to call SetForegroundWindow here.
+        editor_hwnd = hook._editor_hwnd
+        if editor_hwnd:
+            ok = ctypes.windll.user32.SetForegroundWindow(editor_hwnd)
+            print(f"[DEBUG] SetForegroundWindow({editor_hwnd:#x}) = {ok}")
+            time.sleep(0.02)
+
         for _ in range(len(original)):
             controller.press(kb.Key.backspace)
             controller.release(kb.Key.backspace)
