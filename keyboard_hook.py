@@ -282,13 +282,9 @@ class KeyboardHook:
         # <Button-1> handler will fire next and trigger the replacement.
         if pressed and not self.is_replacing:
             if self._is_click_on_bubble and self._is_click_on_bubble(x, y):
-                # DEBUG — remove after confirming click detection works
-                print("[DEBUG] bubble click detected, triggering replace")
                 if self._on_bubble_click:
                     self._on_bubble_click()
                 return  # do NOT clear buffer
-            # DEBUG
-            print(f"[DEBUG] click outside bubble, clearing buffer")
             self._clear_buffer()
 
     # ------------------------------------------------------------------

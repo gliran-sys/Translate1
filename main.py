@@ -132,8 +132,6 @@ def _replace_text(
       4. Call finish_replace()   — clears buffer THEN sets is_replacing=False
                                    (prevents injected chars bleeding into buffer)
     """
-    # DEBUG — remove after confirming replacement works
-    print(f"[DEBUG] _replace_text: '{original}' -> '{translation}'")
     hook.is_replacing = True
     try:
         # Short delay so any in-flight click event resolves before injection
@@ -147,14 +145,20 @@ def _replace_text(
         # permission to call SetForegroundWindow here.
         editor_hwnd = hook._editor_hwnd
         if editor_hwnd:
-            ok = ctypes.windll.user32.SetForegroundWindow(editor_hwnd)
-            print(f"[DEBUG] SetForegroundWindow({editor_hwnd:#x}) = {ok}")
-            time.sleep(0.02)
+            ctypes.windll.user32.SetForegroundWindow(editor_hwnd)
+            # 100 ms gives the focus transition enough time to commit before
+            # the first backspace fires.  20 ms was too short on some systems,
+            # causing the first few keystrokes to still land on the bubble.
+            time.sleep(0.1)
 
         for _ in range(len(original)):
             controller.press(kb.Key.backspace)
             controller.release(kb.Key.backspace)
             time.sleep(0.01)
+
+        # Brief pause between delete and type phases so the editor finishes
+        # processing the backspaces before receiving the new characters.
+        time.sleep(0.05)
 
         _type_unicode(translation)
 
