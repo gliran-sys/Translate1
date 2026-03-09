@@ -70,6 +70,10 @@ LAYOUTS: dict[str, dict[str, str]] = {
 # Prevents noisy single-character bubbles.
 MIN_WORD_LENGTH = 2
 
+# Characters that can appear in the buffer between or after words and are
+# passed through translation unchanged (word separators and common punctuation).
+_SEPARATORS = frozenset(' ?!.,;:')
+
 
 # ---------------------------------------------------------------------------
 # LayoutPair
@@ -129,25 +133,35 @@ class LayoutPair:
         """
         Auto-detect the source layout and translate to the other.
 
+        Supports full sentences: spaces and common punctuation (?!.,;:) pass
+        through unchanged; only letter characters determine the source layout
+        and are translated.
+
         Returns None if:
-          - text has fewer than MIN_WORD_LENGTH characters
-          - text contains characters not belonging exclusively to one layout
+          - fewer than MIN_WORD_LENGTH letter characters are present
+          - letter characters don't belong exclusively to one layout
           - the translation would be identical to the input
         """
-        if len(text) < MIN_WORD_LENGTH:
-            return None
-
-        # Normalise case so Latin-based layouts (like English) match lowercase
         lower = text.lower()
 
+        # Count only letter characters (not separators) for the minimum-length
+        # check so single-char suggestions stay suppressed while multi-word
+        # sentences with short words ("nv" → "מה") translate correctly.
+        letter_lower = [c for c in lower if c not in _SEPARATORS]
+        if len(letter_lower) < MIN_WORD_LENGTH:
+            return None
+
+        # Detect source layout from letter chars only — separators are neutral.
+        letter_orig = [c for c in text if c not in _SEPARATORS]
+
         # Try A → B
-        if all(c in self._chars_a for c in lower):
+        if all(c in self._chars_a for c in letter_lower):
             result = self._convert(lower, self._inv_a, self._map_b)
             if result and result != text:
                 return result
 
         # Try B → A  (use original text — non-Latin scripts are case-neutral)
-        if all(c in self._chars_b for c in text):
+        if all(c in self._chars_b for c in letter_orig):
             result = self._convert(text, self._inv_b, self._map_a)
             if result and result != text:
                 return result
@@ -160,9 +174,16 @@ class LayoutPair:
         inv_src: dict[str, str],
         dst: dict[str, str],
     ) -> str | None:
-        """Translate *text* via inverse-source → destination lookup."""
+        """Translate *text* via inverse-source → destination lookup.
+
+        Separator characters (spaces, common punctuation) pass through as-is
+        so that multi-word sentences are translated correctly.
+        """
         out: list[str] = []
         for ch in text:
+            if ch in _SEPARATORS:
+                out.append(ch)
+                continue
             physical = inv_src.get(ch)
             if physical is None:
                 return None

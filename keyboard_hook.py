@@ -79,6 +79,10 @@ _MAPVK_VK_TO_CHAR = 2
 _MAPVK_VK_TO_VSC  = 0   # VK → scan code (needed by ToUnicodeEx)
 _OUR_PID = ctypes.windll.kernel32.GetCurrentProcessId()
 
+# Punctuation characters that may appear within a sentence and pass through
+# translation unchanged.  Space is handled separately (Key.space branch).
+_SENTENCE_SEPARATORS = frozenset('?!.,;:')
+
 
 # GUITHREADINFO lets us find the *focused* child-window within the foreground
 # thread — necessary because GetForegroundWindow() returns the top-level frame,
@@ -302,8 +306,14 @@ class KeyboardHook:
                     if self._buffer:
                         self._buffer = self._buffer[:-1]
                 self._notify()
-            elif key in (kb.Key.space, kb.Key.enter, kb.Key.tab,
-                         kb.Key.esc, kb.Key.delete):
+            elif key == kb.Key.space:
+                # Accumulate space so multi-word sentences build up correctly.
+                # Never let the buffer start with a space.
+                with self._lock:
+                    if self._buffer:
+                        self._buffer += ' '
+                self._notify()
+            elif key in (kb.Key.enter, kb.Key.tab, kb.Key.esc, kb.Key.delete):
                 self._clear_buffer()
             elif key in (kb.Key.left, kb.Key.right, kb.Key.up, kb.Key.down,
                          kb.Key.home, kb.Key.end, kb.Key.page_up, kb.Key.page_down):
@@ -339,16 +349,30 @@ class KeyboardHook:
         # lowercase.  For Hebrew/Cyrillic/Arabic/.lower() is a no-op.
         char = char.lower()
 
-        # Space / tab / newline produced as a character → word boundary
-        if char in (' ', '\t', '\n', '\r'):
+        # Space produced as a character → same as Key.space (accumulate).
+        if char == ' ':
+            with self._lock:
+                if self._buffer:
+                    self._buffer += ' '
+            self._notify()
+            return
+
+        # Tab / newline → hard sentence boundary.
+        if char in ('\t', '\n', '\r'):
             self._clear_buffer()
             return
 
-        # Accumulate only characters that belong to the active pair;
-        # anything else (digit, punctuation not in either layout) clears.
+        # Layout characters → accumulate and translate.
+        # Sentence punctuation → accumulate as a pass-through (translated as-is).
+        # Anything else (digit, symbol not in any layout) → clear.
         if char in self._pair.tracked_chars:
             with self._lock:
                 self._buffer += char
+            self._notify()
+        elif char in _SENTENCE_SEPARATORS:
+            with self._lock:
+                if self._buffer:  # don't start the buffer with punctuation
+                    self._buffer += char
             self._notify()
         else:
             self._clear_buffer()
