@@ -328,5 +328,12 @@ class BubbleUI:
             ).start()
 
     def _on_click(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
-        # Delegate to _do_replace which handles the atomic consume.
-        self._do_replace()
+        # Schedule via after(0) instead of calling directly, so this callback
+        # lands at the END of the after-queue — after any pending _apply_update
+        # calls that haven't run yet.  Calling _do_replace() directly would
+        # race: tkinter can process a <Button-1> event before draining pending
+        # after(0, _apply_update, ...) callbacks, causing _do_replace to read a
+        # stale buffer.  Meanwhile trigger_replace (mouse thread) also schedules
+        # _do_replace via after(0); whichever runs first consumes the buffer and
+        # the second call sees an empty buffer and does nothing.
+        self._root.after(0, self._do_replace)
