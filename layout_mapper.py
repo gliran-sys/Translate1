@@ -31,6 +31,7 @@ LAYOUTS: dict[str, dict[str, str]] = {
         'h': 'h', 'j': 'j', 'k': 'k', 'l': 'l',
         'z': 'z', 'x': 'x', 'c': 'c', 'v': 'v', 'b': 'b',
         'n': 'n', 'm': 'm',
+        ',': ',', '.': '.', ';': ';',
     },
     "Hebrew": {
         'q': '/', 'w': "'", 'e': 'ק', 'r': 'ר', 't': 'א',
@@ -39,6 +40,7 @@ LAYOUTS: dict[str, dict[str, str]] = {
         'h': 'י', 'j': 'ח', 'k': 'ל', 'l': 'ך',
         'z': 'ז', 'x': 'ס', 'c': 'ב', 'v': 'ה', 'b': 'נ',
         'n': 'מ', 'm': 'צ',
+        ',': 'ת', '.': 'ץ', ';': 'ף',
     },
     "Russian": {
         'q': 'й', 'w': 'ц', 'e': 'у', 'r': 'к', 't': 'е',
@@ -72,7 +74,7 @@ MIN_WORD_LENGTH = 2
 
 # Characters that can appear in the buffer between or after words and are
 # passed through translation unchanged (word separators and common punctuation).
-_SEPARATORS = frozenset(' ?!.,;:')
+_SEPARATORS = frozenset(' ?!:')
 
 
 # ---------------------------------------------------------------------------

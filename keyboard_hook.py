@@ -81,7 +81,7 @@ _OUR_PID = ctypes.windll.kernel32.GetCurrentProcessId()
 
 # Punctuation characters that may appear within a sentence and pass through
 # translation unchanged.  Space is handled separately (Key.space branch).
-_SENTENCE_SEPARATORS = frozenset('?!.,;:')
+_SENTENCE_SEPARATORS = frozenset('?!:')
 
 
 # GUITHREADINFO lets us find the *focused* child-window within the foreground
@@ -146,7 +146,13 @@ def _char_for_vk(vk: int, hkl: ctypes.c_void_p) -> str | None:
 
     # --- primary: ToUnicodeEx (works reliably for all layouts) ---
     scan = _u32.MapVirtualKeyExW(vk, _MAPVK_VK_TO_VSC, hkl)
-    key_state = (ctypes.c_byte * 256)()          # all-zero = no modifiers
+    key_state = (ctypes.c_byte * 256)()
+    # Propagate the real Shift state so Shift+key combos resolve to their
+    # shifted characters (e.g. Shift+/ → '?', Shift+1 → '!').
+    # Uppercase letters produced this way are lowercased by the caller.
+    _VK_SHIFT = 0x10
+    if _u32.GetKeyState(_VK_SHIFT) & 0x8000:
+        key_state[_VK_SHIFT] = ctypes.c_byte(-128)  # high bit = key pressed
     buf = ctypes.create_unicode_buffer(8)
     # wFlags=0: the only value guaranteed to work on all Windows versions.
     # wFlags=4 (DONT_CHANGE_DEAD_KEY_STATE) was added in Windows 10 1703;
