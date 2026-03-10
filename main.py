@@ -191,6 +191,18 @@ def main() -> None:
 
     def on_replace(original: str, translation: str) -> None:
         """Runs in a worker thread (spawned by BubbleUI on click)."""
+        # Re-read the hook's live buffer to fix a race condition: the mouse
+        # click can schedule _do_replace before the keyboard thread's last
+        # _apply_update reaches the tkinter queue, leaving _current_buffer in
+        # bubble_ui stale.  hook._buffer is always current (updated
+        # synchronously on every keystroke) and is not yet cleared at this
+        # point (finish_replace() only runs at the end of _replace_text).
+        with hook._lock:
+            live_buf = hook._buffer
+        if live_buf:
+            live_trans = hook._pair.translate(live_buf)
+            if live_trans:
+                original, translation = live_buf, live_trans
         _replace_text(hook, controller, original, translation)
 
     bubble = BubbleUI(root, on_replace=on_replace)
