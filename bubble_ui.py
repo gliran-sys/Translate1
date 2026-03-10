@@ -78,6 +78,13 @@ class BubbleUI:
         self._current_buffer: str = ''
         self._current_translation: str | None = None
         self._auto_hide_id: str | None = None
+        # Guards against two replacement threads starting concurrently.
+        # Set True when a thread is launched; reset to False in its finally
+        # block.  Checked on the tkinter main thread in _do_replace so that
+        # whichever of trigger_replace / _on_click fires first "wins" and
+        # subsequent calls return immediately — even if _apply_update has since
+        # restored _current_buffer between the two _do_replace invocations.
+        self._replacing: bool = False
 
         self._win: tk.Toplevel | None = None
         self._canvas: tk.Canvas | None = None
@@ -311,21 +318,30 @@ class BubbleUI:
 
     def _do_replace(self) -> None:
         """Tkinter-thread handler shared by trigger_replace() and _on_click().
-        Atomically consumes _current_buffer / _current_translation so only the
-        first of the two callers actually fires the replacement."""
+
+        Only the first call that arrives while no replacement is in progress
+        actually starts a thread.  Subsequent calls return immediately, even if
+        _apply_update has restored _current_buffer between invocations (which
+        can happen when the after-queue drains in an unlucky order: the first
+        _do_replace fires with a stale buffer, _apply_update then restores it,
+        and the second _do_replace would otherwise start a second thread)."""
+        if self._replacing:
+            return
         buf = self._current_buffer
         trans = self._current_translation
         if buf and trans:
-            # Clear immediately so a concurrent call from the other path sees
-            # empty values and does nothing.
+            self._replacing = True
             self._current_buffer = ''
             self._current_translation = None
             self._hide()
-            threading.Thread(
-                target=self._on_replace,
-                args=(buf, trans),
-                daemon=True,
-            ).start()
+
+            def _run(b: str = buf, t: str = trans) -> None:
+                try:
+                    self._on_replace(b, t)
+                finally:
+                    self._replacing = False
+
+            threading.Thread(target=_run, daemon=True).start()
 
     def _on_click(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         # Schedule via after(0) instead of calling directly, so this callback
