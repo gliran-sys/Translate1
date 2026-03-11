@@ -108,7 +108,9 @@ def _type_unicode(text: str) -> None:
         for flags in (_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
             ki  = _KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=None)
             inp = _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=ki))
-            _send_input(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            sent = _send_input(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+            if sent == 0:
+                print(f'[DEBUG] _type_unicode: SendInput FAILED for char={char!r} (U+{ord(char):04X})')
         time.sleep(0.005)
 
 
@@ -132,6 +134,7 @@ def _replace_text(
       4. Call finish_replace()   — clears buffer THEN sets is_replacing=False
                                    (prevents injected chars bleeding into buffer)
     """
+    print(f'[DEBUG] _replace_text: backspaces={len(original)}  typing={translation!r}')
     hook.is_replacing = True
     try:
         # Short delay so any in-flight click event resolves before injection
@@ -203,6 +206,7 @@ def main() -> None:
             live_trans = hook._pair.translate(live_buf)
             if live_trans:
                 original, translation = live_buf, live_trans
+        print(f'[DEBUG] on_replace: original={original!r}  translation={translation!r}  live_buf={live_buf!r}')
         _replace_text(hook, controller, original, translation)
 
     bubble = BubbleUI(root, on_replace=on_replace)
