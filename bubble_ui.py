@@ -217,6 +217,13 @@ class BubbleUI:
     # ------------------------------------------------------------------
 
     def _apply_update(self, buffer: str, translation: str | None) -> None:
+        # A late _apply_update queued before _do_replace ran must not show
+        # or re-show the bubble while keystroke injection is in progress.
+        # deiconify() can steal keyboard focus even with WS_EX_NOACTIVATE on
+        # some Windows builds, causing backspaces and typed chars to land on
+        # the bubble (silently discarded) instead of the editor.
+        if self._replacing:
+            return
         self._current_buffer = buffer
         self._current_translation = translation
 
