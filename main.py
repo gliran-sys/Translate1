@@ -83,8 +83,8 @@ class _INPUT(ctypes.Structure):
 
 
 _INPUT_KEYBOARD   = 1
-_KEYEVENTF_UNICODE = 0x0004
 _KEYEVENTF_KEYUP   = 0x0002
+_KEYEVENTF_SCANCODE = 0x0008
 
 # SendInput: same isolation strategy as ToUnicodeEx in keyboard_hook.py.
 # pynput's keyboard Controller also calls windll.user32.SendInput with its own
@@ -96,20 +96,103 @@ _priv_u32.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(_INPUT), ctypes.c_
 _priv_u32.SendInput.restype  = ctypes.c_uint
 _send_input = _priv_u32.SendInput
 
+# ---------------------------------------------------------------------------
+# Clipboard helpers — used for atomic Unicode text injection via Ctrl+V.
+# Character-by-character KEYEVENTF_UNICODE injection is unreliable for
+# multi-word text: the space sent as VK_PACKET (U+0020) triggers editor-side
+# state changes (autocomplete, RTL/LTR boundary events) that corrupt the
+# second word.  Putting the entire translation on the clipboard and pasting
+# with a single Ctrl+V avoids all per-character focus issues.
+# ---------------------------------------------------------------------------
 
-def _type_unicode(text: str) -> None:
-    """Inject *text* via KEYEVENTF_UNICODE so the active keyboard layout is
-    bypassed entirely.  pynput's controller.type() resolves characters through
-    the calling thread's layout (often English), which causes 's' to arrive as
-    'ד' in the text editor when Hebrew layout is active.  Using VK_PACKET +
-    KEYEVENTF_UNICODE sends the raw Unicode scalar directly."""
-    for char in text:
-        scan = ord(char)
-        for flags in (_KEYEVENTF_UNICODE, _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
-            ki  = _KEYBDINPUT(wVk=0, wScan=scan, dwFlags=flags, time=0, dwExtraInfo=None)
-            inp = _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=ki))
-            _send_input(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
-        time.sleep(0.005)
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE  = 0x0002
+
+_kernel32 = ctypes.WinDLL('kernel32')
+_kernel32.GlobalAlloc.argtypes  = [ctypes.c_uint, ctypes.c_size_t]
+_kernel32.GlobalAlloc.restype   = ctypes.c_void_p
+_kernel32.GlobalLock.argtypes   = [ctypes.c_void_p]
+_kernel32.GlobalLock.restype    = ctypes.c_void_p
+_kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+_kernel32.GlobalUnlock.restype  = ctypes.c_int
+_kernel32.GlobalSize.argtypes   = [ctypes.c_void_p]
+_kernel32.GlobalSize.restype    = ctypes.c_size_t
+
+_user32_cb = ctypes.WinDLL('user32')
+_user32_cb.OpenClipboard.argtypes    = [ctypes.c_void_p]
+_user32_cb.OpenClipboard.restype     = ctypes.c_int
+_user32_cb.CloseClipboard.argtypes   = []
+_user32_cb.CloseClipboard.restype    = ctypes.c_int
+_user32_cb.EmptyClipboard.argtypes   = []
+_user32_cb.EmptyClipboard.restype    = ctypes.c_int
+_user32_cb.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+_user32_cb.SetClipboardData.restype  = ctypes.c_void_p
+_user32_cb.GetClipboardData.argtypes = [ctypes.c_uint]
+_user32_cb.GetClipboardData.restype  = ctypes.c_void_p
+
+
+def _get_clipboard() -> str:
+    """Return the current clipboard text (empty string on failure)."""
+    if not _user32_cb.OpenClipboard(None):
+        return ''
+    try:
+        handle = _user32_cb.GetClipboardData(_CF_UNICODETEXT)
+        if not handle:
+            return ''
+        ptr = _kernel32.GlobalLock(handle)
+        if not ptr:
+            return ''
+        try:
+            size = _kernel32.GlobalSize(handle)
+            # Each wchar_t is 2 bytes; strip the null terminator
+            n_chars = size // 2 - 1
+            return ctypes.wstring_at(ptr, max(n_chars, 0))
+        finally:
+            _kernel32.GlobalUnlock(handle)
+    finally:
+        _user32_cb.CloseClipboard()
+
+
+def _set_clipboard(text: str) -> None:
+    """Place *text* on the clipboard as CF_UNICODETEXT."""
+    # Allocate a moveable global block: (len + 1) wchar_t (2 bytes each)
+    n_bytes = (len(text) + 1) * 2
+    handle = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, n_bytes)
+    if not handle:
+        return
+    ptr = _kernel32.GlobalLock(handle)
+    if not ptr:
+        return
+    ctypes.memmove(ptr, (text + '\x00').encode('utf-16-le'), n_bytes)
+    _kernel32.GlobalUnlock(handle)
+
+    if not _user32_cb.OpenClipboard(None):
+        return
+    try:
+        _user32_cb.EmptyClipboard()
+        _user32_cb.SetClipboardData(_CF_UNICODETEXT, handle)
+    finally:
+        _user32_cb.CloseClipboard()
+
+
+def _send_ctrl_v() -> None:
+    """Send Ctrl+V via SendInput (scan-code based, layout-independent)."""
+    _VK_CONTROL = 0x11
+    _VK_V       = 0x56
+    _SC_CONTROL = 0x1D   # scan code for Left Ctrl
+    _SC_V       = 0x2F   # scan code for V
+
+    events: list[tuple[int, int, int]] = [
+        (_VK_CONTROL, _SC_CONTROL, 0),
+        (_VK_V,       _SC_V,       0),
+        (_VK_V,       _SC_V,       _KEYEVENTF_KEYUP),
+        (_VK_CONTROL, _SC_CONTROL, _KEYEVENTF_KEYUP),
+    ]
+    for vk, sc, flags in events:
+        ki  = _KEYBDINPUT(wVk=vk, wScan=sc, dwFlags=flags | _KEYEVENTF_SCANCODE,
+                          time=0, dwExtraInfo=None)
+        inp = _INPUT(type=_INPUT_KEYBOARD, _=_INPUT_UNION(ki=ki))
+        _send_input(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +211,15 @@ def _replace_text(
     Ordering is critical:
       1. Set is_replacing=True   — stop capturing keystrokes
       2. Send backspaces         — erase the typed word
-      3. Type the translation    — inject the new text
+      3. Paste the translation   — inject via clipboard + Ctrl+V (atomic)
       4. Call finish_replace()   — clears buffer THEN sets is_replacing=False
                                    (prevents injected chars bleeding into buffer)
+
+    Character-by-character KEYEVENTF_UNICODE injection is avoided because the
+    space character sent as VK_PACKET triggers editor-side state changes
+    (autocomplete, RTL/LTR boundary events) that corrupt subsequent characters.
+    Placing the entire string on the clipboard and sending a single Ctrl+V is
+    fully atomic and immune to per-character layout issues.
     """
     hook.is_replacing = True
     try:
@@ -143,9 +232,14 @@ def _replace_text(
         # (and are silently discarded) instead of in the text editor.
         # Our process received the click input event, so Windows grants us
         # permission to call SetForegroundWindow here.
+        # SetForegroundWindow requires a top-level HWND; child HWNDs are silently
+        # ignored.  GetAncestor(GA_ROOT=2) walks up to the root owner window.
         editor_hwnd = hook._editor_hwnd
         if editor_hwnd:
-            ctypes.windll.user32.SetForegroundWindow(editor_hwnd)
+            _GA_ROOT = 2
+            root_hwnd = ctypes.windll.user32.GetAncestor(editor_hwnd, _GA_ROOT)
+            target_hwnd = root_hwnd if root_hwnd else editor_hwnd
+            ctypes.windll.user32.SetForegroundWindow(target_hwnd)
             # 100 ms gives the focus transition enough time to commit before
             # the first backspace fires.  20 ms was too short on some systems,
             # causing the first few keystrokes to still land on the bubble.
@@ -156,11 +250,21 @@ def _replace_text(
             controller.release(kb.Key.backspace)
             time.sleep(0.01)
 
-        # Brief pause between delete and type phases so the editor finishes
-        # processing the backspaces before receiving the new characters.
+        # Brief pause between delete and paste phases so the editor finishes
+        # processing the backspaces before receiving the pasted text.
         time.sleep(0.05)
 
-        _type_unicode(translation)
+        # Save the current clipboard, paste the translation, then restore.
+        saved_clipboard = _get_clipboard()
+        try:
+            _set_clipboard(translation)
+            _send_ctrl_v()
+            # Give the paste event time to be processed before restoring the
+            # clipboard; too short and the editor may still be reading it.
+            time.sleep(0.15)
+        finally:
+            if saved_clipboard:
+                _set_clipboard(saved_clipboard)
 
     finally:
         # Always restore state — even if injection raised an exception.
