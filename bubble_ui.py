@@ -43,15 +43,16 @@ def _get_cursor_pos() -> tuple[int, int]:
 # How many milliseconds of idle time before the bubble auto-hides
 _AUTO_HIDE_MS = 3000
 
-# Visual constants
-_PAD_X = 14
-_PAD_Y = 6
-_OFFSET_Y = 38          # pixels above the cursor
-_FONT = ("Segoe UI", 13, "bold")
-_BG = "#2C2C54"         # dark purple
-_FG = "#EFEFEF"         # near-white
-_BORDER_COLOR = "#7F5AF0"
-_CORNER_RADIUS = 10
+# Visual constants — iOS 26 "liquid glass" dark style
+_PAD_X = 20
+_PAD_Y = 11
+_OFFSET_Y = 42              # pixels above the cursor
+_FONT = ("Segoe UI Variable Display", 13)   # falls back to Segoe UI on older Win
+_BG   = "#1C1C1E"           # iOS dark system background
+_FG   = "#FFFFFF"           # pure white
+_BORDER_COLOR = "#0A84FF"   # iOS system blue — signals interactivity
+_BORDER_WIDTH = 1
+_CORNER_RADIUS = 18         # pill-like, matches iOS card radius
 
 
 class BubbleUI:
@@ -139,7 +140,7 @@ class BubbleUI:
         win.withdraw()                        # start hidden
         win.overrideredirect(True)            # no title bar / borders
         win.attributes('-topmost', True)      # always on top
-        win.attributes('-alpha', 0.93)        # slight transparency
+        win.attributes('-alpha', 0.92)        # frosted-glass transparency
         # Make the window background transparent on Windows
         win.configure(bg='black')
         win.attributes('-transparentcolor', 'black')
@@ -186,8 +187,11 @@ class BubbleUI:
         self._win.geometry(f'{w}x{h}')  # type: ignore[union-attr]
 
         r = _CORNER_RADIUS
-        # Draw rounded rectangle (border then fill)
-        self._round_rect(canvas, 0, 0, w, h, r, fill=_BG, outline=_BORDER_COLOR, width=2)
+        # Draw border layer first (slightly larger, iOS blue), then fill on top.
+        # Using a 1 px inset for the fill keeps the border visible as a thin ring.
+        b = _BORDER_WIDTH
+        self._round_rect(canvas, 0, 0, w, h, r, fill=_BORDER_COLOR, outline='')
+        self._round_rect(canvas, b, b, w - b, h - b, max(r - b, 0), fill=_BG, outline='')
 
         self._text_id = canvas.create_text(
             w // 2, h // 2,
