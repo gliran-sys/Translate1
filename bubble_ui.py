@@ -72,7 +72,8 @@ _AUTO_HIDE_MS = 3000
 # Visual constants — iOS 26 "liquid glass" dark style
 _PAD_X = 20
 _PAD_Y = 11
-_OFFSET_Y = 42              # pixels above the cursor
+_OFFSET_Y_ABOVE = 42        # pixels above the cursor (preferred position)
+_OFFSET_Y_BELOW = 24        # pixels below the cursor (fallback when near top)
 _FONT = ("Segoe UI Variable Display", 13)   # falls back to Segoe UI on older Win
 _BG   = "#1C1C1E"           # iOS dark system background
 _FG   = "#FFFFFF"           # pure white
@@ -310,15 +311,19 @@ class BubbleUI:
         w = self._win.winfo_width()
         h = self._win.winfo_height()
 
-        # Place bubble centred above the cursor
-        x = cx - w // 2
-        y = cy - h - _OFFSET_Y
-
-        # Clamp to the work area of whichever monitor the cursor is on.
-        # winfo_screenwidth/height() returns only the primary monitor's size,
-        # so on secondary monitors the bubble would be wrongly clamped to the
-        # primary screen.  MonitorFromPoint gives us the correct bounds.
         mon_left, mon_top, mon_right, mon_bottom = _monitor_work_area(cx, cy)
+
+        # Prefer above the cursor; flip below when there isn't enough room so
+        # the bubble doesn't cover the text the user is currently editing.
+        if cy - h - _OFFSET_Y_ABOVE >= mon_top:
+            y = cy - h - _OFFSET_Y_ABOVE
+        else:
+            y = cy + _OFFSET_Y_BELOW
+
+        x = cx - w // 2
+
+        # Clamp to the work area of the current monitor (handles multi-screen
+        # and taskbar exclusion; winfo_screenwidth/height is primary-only).
         x = max(mon_left, min(x, mon_right - w))
         y = max(mon_top,  min(y, mon_bottom - h))
 

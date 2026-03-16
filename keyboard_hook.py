@@ -313,6 +313,20 @@ class KeyboardHook:
                         self._buffer = self._buffer[:-1]
                 self._notify()
             elif key == kb.Key.space:
+                # Ctrl+Space — hotkey to accept the current translation (same
+                # as clicking the bubble).  Suppress the keystroke so the space
+                # never lands in the editor.  Only intercepts when a non-empty
+                # buffer has a valid translation; otherwise falls through to
+                # normal space-accumulation so Ctrl+Space still works in apps.
+                _VK_CONTROL = 0x11
+                if (self._on_bubble_click
+                        and ctypes.windll.user32.GetAsyncKeyState(_VK_CONTROL) & 0x8000):
+                    with self._lock:
+                        buf = self._buffer
+                    if buf and self._pair.translate(buf):
+                        self._on_bubble_click()
+                        return False  # suppress — don't send space to editor
+
                 # Accumulate space so multi-word sentences build up correctly.
                 # Never let the buffer start with a space.
                 with self._lock:
