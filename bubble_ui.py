@@ -30,10 +30,36 @@ class _RECT(ctypes.Structure):
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize",    ctypes.c_ulong),
+        ("rcMonitor", _RECT),
+        ("rcWork",    _RECT),
+        ("dwFlags",   ctypes.c_ulong),
+    ]
+
+
 def _get_cursor_pos() -> tuple[int, int]:
     pt = _POINT()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
     return pt.x, pt.y
+
+
+def _monitor_work_area(x: int, y: int) -> tuple[int, int, int, int]:
+    """Return (left, top, right, bottom) of the work area of the monitor that
+    contains the point (x, y).  Falls back to the primary monitor if the call
+    fails.  Using the work area (rcWork) instead of rcMonitor excludes the
+    taskbar so the bubble is never hidden behind it."""
+    _MONITOR_DEFAULTTONEAREST = 2
+    pt = _POINT(x, y)
+    hmon = ctypes.windll.user32.MonitorFromPoint(pt, _MONITOR_DEFAULTTONEAREST)
+    info = _MONITORINFO()
+    info.cbSize = ctypes.sizeof(_MONITORINFO)
+    if hmon and ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+        r = info.rcWork
+        return r.left, r.top, r.right, r.bottom
+    # Fallback: assume a single 1920×1080 primary screen at origin
+    return 0, 0, 1920, 1080
 
 
 # --------------------------------------------------------------------------
@@ -288,11 +314,13 @@ class BubbleUI:
         x = cx - w // 2
         y = cy - h - _OFFSET_Y
 
-        # Keep on-screen
-        screen_w = self._win.winfo_screenwidth()
-        screen_h = self._win.winfo_screenheight()
-        x = max(0, min(x, screen_w - w))
-        y = max(0, min(y, screen_h - h))
+        # Clamp to the work area of whichever monitor the cursor is on.
+        # winfo_screenwidth/height() returns only the primary monitor's size,
+        # so on secondary monitors the bubble would be wrongly clamped to the
+        # primary screen.  MonitorFromPoint gives us the correct bounds.
+        mon_left, mon_top, mon_right, mon_bottom = _monitor_work_area(cx, cy)
+        x = max(mon_left, min(x, mon_right - w))
+        y = max(mon_top,  min(y, mon_bottom - h))
 
         self._win.geometry(f'+{x}+{y}')
 
