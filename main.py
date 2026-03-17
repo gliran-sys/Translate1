@@ -174,8 +174,17 @@ def _set_clipboard(text: str) -> None:
     finally:
         _user32_cb.CloseClipboard()
 
+def _clear_clipboard() -> None:
+    """Empty the clipboard entirely."""
+    if not _user32_cb.OpenClipboard(None):
+        return
+    try:
+        _user32_cb.EmptyClipboard()
+    finally:
+        _user32_cb.CloseClipboard()
 
-def _send_ctrl_v() -> None:
+
+() -> None:
     """Send Ctrl+V via SendInput (scan-code based, layout-independent)."""
     _VK_CONTROL = 0x11
     _VK_V       = 0x56
@@ -254,17 +263,21 @@ def _replace_text(
         # processing the backspaces before receiving the pasted text.
         time.sleep(0.05)
 
-        # Save the current clipboard, paste the translation, then restore.
+        # Save the current clipboard, paste the translation, then restore or
+        # clear.  Always removing the translation from the clipboard after the
+        # paste means it never lingers in the clipboard history.
         saved_clipboard = _get_clipboard()
         try:
             _set_clipboard(translation)
             _send_ctrl_v()
-            # Give the paste event time to be processed before restoring the
-            # clipboard; too short and the editor may still be reading it.
+            # Give the paste event time to be processed before touching the
+            # clipboard again; too short and the editor may still be reading it.
             time.sleep(0.15)
         finally:
             if saved_clipboard:
                 _set_clipboard(saved_clipboard)
+            else:
+                _clear_clipboard()
 
     finally:
         # Always restore state — even if injection raised an exception.
