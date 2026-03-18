@@ -168,6 +168,23 @@ class LayoutPair:
             if result and result != text:
                 return result
 
+        # Handle auto-capitalised first character.
+        # e.g. "Hקךךם" → the OS capitalised the first keystroke to 'H'
+        # (English) while the rest landed in layout B ("קךךם" = e,l,l,o in
+        # Hebrew).  Neither pure-A nor pure-B detection fires, so we normalise
+        # the first char into layout B and retry B→A, then restore the capital.
+        if (text and text[0].isascii() and text[0].isupper()
+                and text[0].lower() in self._inv_a):
+            rest_letters = [c for c in text[1:] if c not in _SEPARATORS]
+            if rest_letters and all(c in self._chars_b for c in rest_letters):
+                physical = self._inv_a[text[0].lower()]
+                b_char = self._map_b.get(physical)
+                if b_char is not None:
+                    normalized = b_char + text[1:]
+                    result = self._convert(normalized, self._inv_b, self._map_a)
+                    if result and result != text:
+                        return result[0].upper() + result[1:]
+
         return None
 
     @staticmethod
