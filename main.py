@@ -184,7 +184,7 @@ def _clear_clipboard() -> None:
         _user32_cb.CloseClipboard()
 
 
-() -> None:
+def _send_ctrl_v() -> None:
     """Send Ctrl+V via SendInput (scan-code based, layout-independent)."""
     _VK_CONTROL = 0x11
     _VK_V       = 0x56
