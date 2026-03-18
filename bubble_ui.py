@@ -203,8 +203,15 @@ class BubbleUI:
 
         canvas.delete('all')
 
+        # Wrap in LTR embedding marks so RTL scripts (Hebrew, Arabic …) display
+        # with words in the same left-to-right order they were typed.  Without
+        # this the Unicode bidi algorithm detects a RTL paragraph and reverses
+        # the visual word order ("לכולם שלום" instead of "שלום לכולם").
+        # U+202A = LEFT-TO-RIGHT EMBEDDING, U+202C = POP DIRECTIONAL FORMATTING.
+        display_text = '\u202a' + text + '\u202c'
+
         # Use a temporary label to measure
-        test_lbl = tk.Label(self._win, text=text, font=_FONT)
+        test_lbl = tk.Label(self._win, text=display_text, font=_FONT)
         test_lbl.update_idletasks()
         w = test_lbl.winfo_reqwidth() + _PAD_X * 2
         h = test_lbl.winfo_reqheight() + _PAD_Y * 2
@@ -222,7 +229,7 @@ class BubbleUI:
 
         self._text_id = canvas.create_text(
             w // 2, h // 2,
-            text=text,
+            text=display_text,
             font=_FONT,
             fill=_FG,
             anchor='center',
