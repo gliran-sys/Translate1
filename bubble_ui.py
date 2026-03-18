@@ -81,6 +81,32 @@ _BORDER_COLOR = "#0A84FF"   # iOS system blue — signals interactivity
 _BORDER_WIDTH = 1
 _CORNER_RADIUS = 18         # pill-like, matches iOS card radius
 
+# ---------------------------------------------------------------------------
+# Bidi display helper
+# ---------------------------------------------------------------------------
+
+def _rtl_display(text: str) -> str:
+    """
+    Return a string that, after natural RTL rendering by the canvas, visually
+    shows words in the same left-to-right order as the source (typed) text.
+
+    Tkinter's canvas applies RTL rendering when the text contains strong RTL
+    characters (Hebrew, Arabic), reversing the visual word order.  Pre-reversing
+    the words counteracts this so the bubble reads left-to-right matching how
+    the sentence was typed.  Character order within each word is untouched, so
+    individual Hebrew/Arabic words still render correctly.
+
+    For LTR scripts (English, Russian, Greek) the text is returned unchanged.
+    """
+    for ch in text:
+        cp = ord(ch)
+        if 0x0590 <= cp <= 0x05FF or 0x0600 <= cp <= 0x06FF:   # Hebrew / Arabic
+            words = text.split(' ')
+            return ' '.join(reversed(words))
+        if ch.isalpha():
+            break   # first alphabetic char is LTR — no reversal needed
+    return text
+
 
 class BubbleUI:
     """
@@ -203,12 +229,15 @@ class BubbleUI:
 
         canvas.delete('all')
 
-        # Wrap in LTR embedding marks so RTL scripts (Hebrew, Arabic …) display
-        # with words in the same left-to-right order they were typed.  Without
-        # this the Unicode bidi algorithm detects a RTL paragraph and reverses
-        # the visual word order ("לכולם שלום" instead of "שלום לכולם").
-        # U+202A = LEFT-TO-RIGHT EMBEDDING, U+202C = POP DIRECTIONAL FORMATTING.
-        display_text = '\u202a' + text + '\u202c'
+        # For RTL scripts (Hebrew, Arabic) tkinter's canvas applies natural RTL
+        # rendering, which reverses word order visually.  Unicode LTR-embedding
+        # marks (U+202A/U+202C) are unreliable in Tk canvas — they can corrupt
+        # character order within individual words (e.g. "קצת" → "תקצ").
+        #
+        # Reliable fix: pre-reverse the word order so that natural RTL display
+        # puts them back in the order they were typed.  Individual word character
+        # order is unaffected, so each Hebrew word still renders correctly.
+        display_text = _rtl_display(text)
 
         # Use a temporary label to measure
         test_lbl = tk.Label(self._win, text=display_text, font=_FONT)
