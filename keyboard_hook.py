@@ -364,13 +364,14 @@ class KeyboardHook:
         if char is None:
             return
 
-        # Normalise to lowercase.  MapVirtualKeyExW returns uppercase for Latin
-        # keys (e.g. 'A' for VK_A) but tracked_chars / translate() expect
-        # lowercase.  For Hebrew/Cyrillic/Arabic/.lower() is a no-op.
-        char = char.lower()
+        # Use lowercase for comparisons (tracked_chars / translate work in
+        # lowercase), but store the original char so that an auto-capitalised
+        # first letter (e.g. 'H' instead of 'ק') is preserved in the buffer
+        # and can be detected by translate()'s mixed-layout heuristic.
+        char_lower = char.lower()
 
         # Space produced as a character → same as Key.space (accumulate).
-        if char == ' ':
+        if char_lower == ' ':
             with self._lock:
                 if self._buffer:
                     self._buffer += ' '
@@ -378,18 +379,18 @@ class KeyboardHook:
             return
 
         # Tab / newline → hard sentence boundary.
-        if char in ('\t', '\n', '\r'):
+        if char_lower in ('\t', '\n', '\r'):
             self._clear_buffer()
             return
 
         # Layout characters → accumulate and translate.
         # Sentence punctuation → accumulate as a pass-through (translated as-is).
         # Anything else (digit, symbol not in any layout) → clear.
-        if char in self._pair.tracked_chars:
+        if char_lower in self._pair.tracked_chars:
             with self._lock:
-                self._buffer += char
+                self._buffer += char          # original case preserved
             self._notify()
-        elif char in _SENTENCE_SEPARATORS:
+        elif char_lower in _SENTENCE_SEPARATORS:
             with self._lock:
                 if self._buffer:  # don't start the buffer with punctuation
                     self._buffer += char
