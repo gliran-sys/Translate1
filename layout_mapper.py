@@ -170,25 +170,33 @@ class LayoutPair:
 
         # Handle mixed-layout first character.
         # Covers two scenarios:
-        #   1. Auto-capitalise (app-level): the app upcases after the keystroke,
-        #      so our hook sees no Shift → buffer starts with lowercase 'h'.
-        #   2. Shift-capitalise: user held Shift → buffer starts with uppercase 'H'.
-        # In both cases the first character is an ASCII letter from layout A
-        # while the remaining letters are all from layout B.
-        # We normalise the first char into layout B and retry B→A, then restore
-        # the original capitalisation (upper only if the buffer char was upper).
-        first = text[0] if text else ''
+        #   A) Single-word / fresh buffer: text[0] is an ASCII letter from layout A
+        #      while all remaining letter chars are from layout B.
+        #   B) Multi-word buffer: previous words are all layout B and the last
+        #      word starts with an ASCII letter from layout A (auto-capitalise at
+        #      a word boundary), while the rest of that word is layout B.
+        # In both cases we normalise the mismatched first char of the last word
+        # into layout B, translate the whole buffer B→A, then restore the
+        # original capitalisation.
+        words = text.split(' ')
+        last_word = words[-1]
+        first = last_word[0] if last_word else ''
         if first.isascii() and first.isalpha() and first.lower() in self._inv_a:
-            rest_letters = [c for c in text[1:] if c not in _SEPARATORS]
-            if rest_letters and all(c in self._chars_b for c in rest_letters):
+            last_rest = [c for c in last_word[1:] if c not in _SEPARATORS]
+            prev_letters = [c for c in ' '.join(words[:-1]) if c not in _SEPARATORS]
+            all_prev_b = all(c in self._chars_b for c in prev_letters) if prev_letters else True
+            if last_rest and all(c in self._chars_b for c in last_rest) and all_prev_b:
                 physical = self._inv_a[first.lower()]
                 b_char = self._map_b.get(physical)
                 if b_char is not None:
-                    normalized = b_char + text[1:]
+                    normalized_last = b_char + last_word[1:]
+                    normalized = ' '.join(words[:-1] + [normalized_last]).lstrip(' ')
                     result = self._convert(normalized, self._inv_b, self._map_a)
                     if result and result != text:
                         if first.isupper():
-                            return result[0].upper() + result[1:]
+                            result_words = result.split(' ')
+                            result_words[-1] = result_words[-1][0].upper() + result_words[-1][1:]
+                            return ' '.join(result_words)
                         return result
 
         return None
