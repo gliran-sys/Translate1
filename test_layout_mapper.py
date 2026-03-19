@@ -98,9 +98,17 @@ class TestTranslateEnglishHebrew(unittest.TestCase):
         self.assertIsNone(self.pair.translate("h"))
         self.assertIsNone(self.pair.translate(""))
 
-    def test_mixed_layouts_returns_none(self):
-        # 'a' is English; 'ש' is Hebrew — mixed → None
-        self.assertIsNone(self.pair.translate("aש"))
+    def test_mixed_layout_first_char_translated(self):
+        # 'a' (English) and 'ש' (Hebrew) are both physical key 'a' — the
+        # mixed-layout heuristic now handles this: normalise 'a' to 'ש' and
+        # translate B→A → "aa".
+        self.assertEqual(self.pair.translate("aש"), "aa")
+
+    def test_mixed_layouts_mid_word_returns_none(self):
+        # Mid-word layout switch where the LAST char is from the wrong layout
+        # and no valid normalisation exists → None.
+        # 'ש' is Hebrew (physical 'a'), 'z' is English but not in Hebrew → None.
+        self.assertIsNone(self.pair.translate("שz"))
 
     def test_digit_returns_none(self):
         # '5' is in neither layout

@@ -168,22 +168,28 @@ class LayoutPair:
             if result and result != text:
                 return result
 
-        # Handle auto-capitalised first character.
-        # e.g. "Hקךךם" → the OS capitalised the first keystroke to 'H'
-        # (English) while the rest landed in layout B ("קךךם" = e,l,l,o in
-        # Hebrew).  Neither pure-A nor pure-B detection fires, so we normalise
-        # the first char into layout B and retry B→A, then restore the capital.
-        if (text and text[0].isascii() and text[0].isupper()
-                and text[0].lower() in self._inv_a):
+        # Handle mixed-layout first character.
+        # Covers two scenarios:
+        #   1. Auto-capitalise (app-level): the app upcases after the keystroke,
+        #      so our hook sees no Shift → buffer starts with lowercase 'h'.
+        #   2. Shift-capitalise: user held Shift → buffer starts with uppercase 'H'.
+        # In both cases the first character is an ASCII letter from layout A
+        # while the remaining letters are all from layout B.
+        # We normalise the first char into layout B and retry B→A, then restore
+        # the original capitalisation (upper only if the buffer char was upper).
+        first = text[0] if text else ''
+        if first.isascii() and first.isalpha() and first.lower() in self._inv_a:
             rest_letters = [c for c in text[1:] if c not in _SEPARATORS]
             if rest_letters and all(c in self._chars_b for c in rest_letters):
-                physical = self._inv_a[text[0].lower()]
+                physical = self._inv_a[first.lower()]
                 b_char = self._map_b.get(physical)
                 if b_char is not None:
                     normalized = b_char + text[1:]
                     result = self._convert(normalized, self._inv_b, self._map_a)
                     if result and result != text:
-                        return result[0].upper() + result[1:]
+                        if first.isupper():
+                            return result[0].upper() + result[1:]
+                        return result
 
         return None
 
