@@ -169,35 +169,38 @@ class LayoutPair:
                 return result
 
         # Handle mixed-layout first character.
-        # Covers two scenarios:
-        #   A) Single-word / fresh buffer: text[0] is an ASCII letter from layout A
-        #      while all remaining letter chars are from layout B.
-        #   B) Multi-word buffer: previous words are all layout B and the last
-        #      word starts with an ASCII letter from layout A (auto-capitalise at
-        #      a word boundary), while the rest of that word is layout B.
-        # In both cases we normalise the mismatched first char of the last word
-        # into layout B, translate the whole buffer B→A, then restore the
-        # original capitalisation.
+        # The keyboard layout sometimes switches mid-sentence (or auto-capitalise
+        # fires with the wrong layout active), leaving exactly one word whose
+        # first character is an ASCII letter from layout A while the rest of
+        # that word and every other word in the buffer are from layout B.
+        # Find that word, normalise its first char into layout B, translate the
+        # whole buffer B→A, and restore the original capitalisation.
         words = text.split(' ')
-        last_word = words[-1]
-        first = last_word[0] if last_word else ''
-        if first.isascii() and first.isalpha() and first.lower() in self._inv_a:
-            last_rest = [c for c in last_word[1:] if c not in _SEPARATORS]
-            prev_letters = [c for c in ' '.join(words[:-1]) if c not in _SEPARATORS]
-            all_prev_b = all(c in self._chars_b for c in prev_letters) if prev_letters else True
-            if last_rest and all(c in self._chars_b for c in last_rest) and all_prev_b:
-                physical = self._inv_a[first.lower()]
-                b_char = self._map_b.get(physical)
-                if b_char is not None:
-                    normalized_last = b_char + last_word[1:]
-                    normalized = ' '.join(words[:-1] + [normalized_last]).lstrip(' ')
-                    result = self._convert(normalized, self._inv_b, self._map_a)
-                    if result and result != text:
-                        if first.isupper():
-                            result_words = result.split(' ')
-                            result_words[-1] = result_words[-1][0].upper() + result_words[-1][1:]
-                            return ' '.join(result_words)
-                        return result
+        for word_idx, target_word in enumerate(words):
+            first = target_word[0] if target_word else ''
+            if not (first.isascii() and first.isalpha() and first.lower() in self._inv_a):
+                continue
+            word_rest = [c for c in target_word[1:] if c not in _SEPARATORS]
+            if not word_rest or not all(c in self._chars_b for c in word_rest):
+                continue
+            other_words = words[:word_idx] + words[word_idx + 1:]
+            other_letters = [c for c in ' '.join(other_words) if c not in _SEPARATORS]
+            if other_letters and not all(c in self._chars_b for c in other_letters):
+                continue
+            physical = self._inv_a[first.lower()]
+            b_char = self._map_b.get(physical)
+            if b_char is None:
+                continue
+            normalized_word = b_char + target_word[1:]
+            normalized_words = words[:word_idx] + [normalized_word] + words[word_idx + 1:]
+            result = self._convert(' '.join(normalized_words), self._inv_b, self._map_a)
+            if result and result != text:
+                if first.isupper():
+                    result_words = result.split(' ')
+                    if word_idx < len(result_words):
+                        result_words[word_idx] = result_words[word_idx][0].upper() + result_words[word_idx][1:]
+                    return ' '.join(result_words)
+                return result
 
         return None
 
