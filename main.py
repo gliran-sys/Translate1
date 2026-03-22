@@ -28,6 +28,7 @@ import tkinter as tk
 
 from pynput import keyboard as kb
 
+import updater
 from bubble_ui import BubbleUI
 from keyboard_hook import KeyboardHook
 from layout_mapper import build_installed_pairs, DEFAULT_PAIR, LayoutPair
@@ -290,6 +291,10 @@ def _replace_text(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    # Check for a newer GitHub release and self-replace if one is found.
+    # No-op when running from source (sys.frozen not set).
+    updater.check_and_apply()
+
     available_pairs = build_installed_pairs()
     # Use the first installed pair as default; fall back to DEFAULT_PAIR if
     # the installed set happens not to include English↔Hebrew.

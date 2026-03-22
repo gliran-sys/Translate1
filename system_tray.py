@@ -16,11 +16,14 @@ Provides:
 
 from __future__ import annotations
 
+import threading
 from typing import Callable
 
 from PIL import Image, ImageDraw
 import pystray
 
+import startup
+import updater
 from layout_mapper import LayoutPair
 
 
@@ -137,7 +140,17 @@ class SystemTray:
                 )
             )
 
-        items += [pystray.Menu.SEPARATOR, pystray.MenuItem('Exit', self._handle_exit)]
+        items += [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                'Launch at Startup',
+                self._handle_startup_toggle,
+                checked=lambda item: startup.is_registered(),
+            ),
+            pystray.MenuItem('Check for Updates', self._handle_check_updates),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Exit', self._handle_exit),
+        ]
         return pystray.Menu(*items)
 
     def _toggle_label(self, item: pystray.MenuItem) -> str:  # noqa: ARG002
@@ -168,6 +181,22 @@ class SystemTray:
         icon.title = self._make_title()
         icon.update_menu()
         self._on_toggle(self._enabled)
+
+    def _handle_startup_toggle(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
+        if startup.is_registered():
+            startup.unregister()
+        else:
+            startup.register()
+        icon.update_menu()
+
+    def _handle_check_updates(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
+        # Run in a thread so the tray menu doesn't freeze during the network call.
+        threading.Thread(
+            target=updater.check_and_apply,
+            kwargs={"silent": False},
+            daemon=True,
+            name="updater",
+        ).start()
 
     def _handle_exit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:  # noqa: ARG002
         icon.stop()

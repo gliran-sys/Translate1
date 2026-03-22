@@ -1,0 +1,49 @@
+name: Build and Release
+
+# Trigger: push a version tag  (e.g.  git tag v1.2.0 && git push --tags)
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt pyinstaller
+
+      - name: Write version.py from tag
+        # Strip the leading 'v' so version.py contains e.g. "1.2.0"
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          Set-Content -Path version.py -Value "__version__ = `"$tag`""
+        shell: pwsh
+
+      - name: Build executable
+        run: pyinstaller Translate1.spec
+
+      - name: Create GitHub Release and upload exe
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Translate1 ${{ github.ref_name }}
+          body: |
+            ## What's new
+            See commit history for changes since the previous release.
+
+            ## Installation
+            1. Download `Translate1.exe` below.
+            2. Run it once — then right-click the tray icon and choose **Launch at Startup**.
+            3. Future updates are applied automatically on next launch.
+          files: dist/Translate1.exe
