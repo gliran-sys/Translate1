@@ -168,13 +168,14 @@ class LayoutPair:
             if result and result != text:
                 return result
 
-        # Handle mixed-layout first character.
-        # The keyboard layout sometimes switches mid-sentence (or auto-capitalise
-        # fires with the wrong layout active), leaving exactly one word whose
-        # first character is an ASCII letter from layout A while the rest of
-        # that word and every other word in the buffer are from layout B.
+        # Handle Shift-capitalise with wrong keyboard layout active.
+        # On Windows, pressing Shift+letter while a non-Latin layout (e.g.
+        # Hebrew) is active produces the English uppercase letter rather than
+        # the layout's own character.  This leaves exactly one word in the
+        # buffer whose first character is an uppercase ASCII letter (layout A)
+        # while the rest of that word and all other words are from layout B.
         # Find that word, normalise its first char into layout B, translate the
-        # whole buffer B→A, and restore the original capitalisation.
+        # whole buffer B→A, and restore the capital.
         words = text.split(' ')
         for word_idx, target_word in enumerate(words):
             first = target_word[0] if target_word else ''
