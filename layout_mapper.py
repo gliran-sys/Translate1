@@ -131,6 +131,21 @@ class LayoutPair:
         """
         return self._chars_a | self._chars_b
 
+    def detect_lang(self, text: str) -> str | None:
+        """Return lang_a or lang_b depending on which layout *text* belongs to.
+
+        Only letter/punctuation characters are considered (separators are
+        neutral).  Returns None if the text is ambiguous or empty.
+        """
+        letters = [c for c in text.lower() if c not in _SEPARATORS]
+        if not letters:
+            return None
+        if all(c in self._chars_a for c in letters):
+            return self.lang_a
+        if all(c in self._chars_b for c in letters):
+            return self.lang_b
+        return None
+
     def translate(self, text: str) -> str | None:
         """
         Auto-detect the source layout and translate to the other.

@@ -206,6 +206,39 @@ def _send_ctrl_v() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Input language switching
+# ---------------------------------------------------------------------------
+
+# Maps our internal language names to Windows Keyboard Layout IDs (KLIDs).
+# A KLID is an 8-hex-digit string; the last 4 digits are the locale ID.
+_LANG_KLID: dict[str, str] = {
+    'English': '00000409',
+    'Hebrew':  '0000040d',
+    'Russian': '00000419',
+    'Arabic':  '00000401',
+    'Greek':   '00000408',
+}
+
+
+def _switch_input_language(hwnd: int, lang_name: str) -> None:
+    """Tell *hwnd*'s window to switch its input language to *lang_name*.
+
+    Uses LoadKeyboardLayout to obtain (or load) the HKL for the requested
+    layout, then posts WM_INPUTLANGCHANGEREQUEST to the target window — the
+    same message Windows sends when the user presses the language hotkey.
+    The receiving application's default DefWindowProc accepts the change.
+    """
+    klid = _LANG_KLID.get(lang_name)
+    if klid is None:
+        return
+    _KLF_ACTIVATE            = 0x00000001
+    _WM_INPUTLANGCHANGEREQUEST = 0x0050
+    hkl = ctypes.windll.user32.LoadKeyboardLayoutW(klid, _KLF_ACTIVATE)
+    if hkl:
+        ctypes.windll.user32.PostMessageW(hwnd, _WM_INPUTLANGCHANGEREQUEST, 0, hkl)
+
+
+# ---------------------------------------------------------------------------
 # Text replacement
 # ---------------------------------------------------------------------------
 
@@ -326,6 +359,15 @@ def main() -> None:
             if live_trans:
                 original, translation = live_buf, live_trans
         _replace_text(hook, controller, original, translation)
+        # After the text is replaced, switch the OS input language to match
+        # the translation's script so the user can keep typing in that language.
+        target_lang = hook._pair.detect_lang(translation)
+        if target_lang:
+            editor_hwnd = hook._editor_hwnd
+            if editor_hwnd:
+                _GA_ROOT = 2
+                root_hwnd = ctypes.windll.user32.GetAncestor(editor_hwnd, _GA_ROOT)
+                _switch_input_language(root_hwnd if root_hwnd else editor_hwnd, target_lang)
 
     bubble = BubbleUI(root, on_replace=on_replace)
 
