@@ -81,11 +81,28 @@ Right-click the tray icon for:
 | Event | Result |
 |-------|--------|
 | Type a word | Bubble appears above cursor with translation |
-| Click bubble | Typed text replaced with translation |
+| Click bubble | Typed text replaced with translation **and** OS input language switches to match |
 | Press Space / Enter / Esc | Bubble hides, buffer clears |
 | Press Backspace | Buffer shrinks, bubble updates |
 | Move cursor (arrow keys) | Buffer clears, bubble hides |
 | 3 seconds idle | Bubble auto-hides |
+
+### Automatic language switch on click
+
+When you click the bubble, the app does two things atomically:
+
+1. Replaces the typed text with the translation.
+2. Sends `WM_INPUTLANGCHANGEREQUEST` to the active window with the HKL for the
+   target language, so the OS input language indicator (taskbar / language bar)
+   switches immediately.
+
+**Example:** You are in English mode, accidentally type `akuo`, the bubble shows
+`שלום` — clicking it replaces the text *and* switches your keyboard to Hebrew so
+you can continue typing in Hebrew without pressing `Alt+Shift` manually.
+
+This works for all supported layout pairs (English ↔ Hebrew, English ↔ Russian,
+etc.).  The layout must be installed in Windows (**Settings → Time & language →
+Language & region**) for the switch to take effect.
 
 ---
 
