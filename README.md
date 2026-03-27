@@ -27,6 +27,123 @@ corresponding characters in the Hebrew keyboard layout (and vice-versa).
 
 ---
 
+## Architecture
+
+### Components and threads
+
+The app runs four concurrent threads that communicate through callbacks and
+tkinter's `root.after()` queue.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        Translate1 process                        │
+│                                                                  │
+│  Thread 1 – main          Thread 2 – daemon   Thread 3 – daemon  │
+│  ┌────────────────┐       ┌──────────────┐    ┌──────────────┐  │
+│  │  tkinter loop  │       │  Keyboard    │    │  Mouse       │  │
+│  │                │       │  listener    │    │  listener    │  │
+│  │  ┌──────────┐  │       │  (pynput)    │    │  (pynput)    │  │
+│  │  │ BubbleUI │  │       └──────┬───────┘    └──────┬───────┘  │
+│  │  └──────────┘  │             │                    │          │
+│  └───────▲────────┘             └─────────┬──────────┘          │
+│          │  root.after()                  │                      │
+│          │  (thread-safe)                 ▼                      │
+│          │                       ┌────────────────┐              │
+│          └───────────────────────│  KeyboardHook  │              │
+│                  on_change()     └────────────────┘              │
+│                                                                  │
+│  Thread 4 – daemon                                               │
+│  ┌──────────────────┐                                            │
+│  │  SystemTray      │  (pystray — owns tray icon & menu)         │
+│  └──────────────────┘                                            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Module responsibilities
+
+```
+main.py
+  │
+  ├── keyboard_hook.py   – listens to every keypress system-wide,
+  │                        maintains _buffer (in-memory string only),
+  │                        calls on_change() when the buffer changes
+  │
+  ├── layout_mapper.py   – pure translation logic; no I/O
+  │       LayoutPair.translate(buffer) → suggested text | None
+  │       LayoutPair.detect_lang(text) → "Hebrew" | "English" | …
+  │
+  ├── bubble_ui.py       – borderless tkinter window drawn above
+  │                        the cursor; fires on_replace() on click
+  │
+  ├── system_tray.py     – tray icon, enable/disable toggle,
+  │                        language-pair selector, update trigger
+  │
+  ├── updater.py         – checks GitHub Releases on launch;
+  │                        downloads & self-replaces the .exe if newer
+  │
+  └── startup.py         – reads/writes Windows registry key for
+                           "Launch at startup" option
+```
+
+### Keystroke → bubble flow
+
+```
+User presses a key
+        │
+        ▼
+  KeyboardHook._on_key_press()
+        │
+        ├─ Backspace ──────────────► trim last char from _buffer
+        ├─ Enter / Esc / Tab ──────► clear _buffer
+        ├─ Arrow / Home / End ─────► clear _buffer
+        ├─ Space ──────────────────► append space (multi-word support)
+        ├─ Layout character ───────► append char to _buffer
+        └─ Digit / other symbol ───► clear _buffer
+        │
+        ▼
+  LayoutPair.translate(_buffer)
+        │
+        ├─ None (too short / mixed script) ──► BubbleUI hides
+        └─ translation string ────────────────► BubbleUI shows bubble
+                                                above cursor
+```
+
+### Bubble click → replacement + language switch flow
+
+```
+User clicks the bubble
+        │
+        ▼
+  KeyboardHook._on_mouse_click()
+  detects the click is inside the bubble rect
+        │
+        ▼
+  BubbleUI.trigger_replace()  [mouse thread → root.after(0)]
+        │
+        ▼
+  BubbleUI._do_replace()  [tkinter main thread]
+  spawns a worker thread →
+        │
+        ├─ Step 1: _replace_text()
+        │     │
+        │     ├── hook.is_replacing = True  (suppress incoming keys)
+        │     ├── SetForegroundWindow(editor window)
+        │     ├── Send N × Backspace        (erase original text)
+        │     ├── Write translation to clipboard
+        │     ├── Send Ctrl+V               (paste translation)
+        │     ├── Restore / clear clipboard
+        │     └── hook.finish_replace()     (clear buffer, re-enable hook)
+        │
+        └─ Step 2: _switch_input_language()
+              │
+              ├── LayoutPair.detect_lang(translation) → target language
+              ├── LoadKeyboardLayoutW(KLID)            → HKL handle
+              └── PostMessageW(editor, WM_INPUTLANGCHANGEREQUEST, HKL)
+                  → OS input language indicator switches immediately
+```
+
+---
+
 ## Download (recommended)
 
 1. Go to the [Releases page](../../releases/latest).
